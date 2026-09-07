@@ -832,15 +832,54 @@
         date_of_payment: $("rental-datepaid").value || null,
         mode_of_payment: $("rental-mode").value.trim() || null,
       };
-      let error;
-      if (id) ({ error } = await sb.from("rental_income").update(payload).eq("id", id));
-      else ({ error } = await sb.from("rental_income").insert(payload));
+      let error, savedId = id ? Number(id) : null;
+      if (id) {
+        ({ error } = await sb.from("rental_income").update(payload).eq("id", id));
+      } else {
+        const res = await sb.from("rental_income").insert(payload).select("id").single();
+        error = res.error;
+        savedId = res.data?.id ?? null;
+      }
       if (error) return toast(error.message, true);
-      toast(id ? "Rental income updated" : "Rental income saved");
+      if (savedId) await syncRentalWithholding(savedId, payload);
+      const suffix = Number(payload.tax_withheld) > 0 ? " — 2307 synced" : "";
+      toast((id ? "Rental income updated" : "Rental income saved") + suffix);
       resetRentalForm();
       loadRental();
     });
     $("rental-cancel-edit").addEventListener("click", resetRentalForm);
+  }
+
+  function quarterOf(monthStr) {
+    // monthStr like "2026-09" or "2026-09-01"
+    const m = Number(monthStr.slice(5, 7));
+    return `Q${Math.floor((m - 1) / 3) + 1}`;
+  }
+
+  // Every rental payment with tax actually withheld implies a 2307 the
+  // tenant issued — keep one withholding_2307 row in sync with each
+  // rental_income row instead of asking for the same numbers twice.
+  async function syncRentalWithholding(rentalId, payload) {
+    const taxWithheld = Number(payload.tax_withheld || 0);
+    if (taxWithheld > 0) {
+      const whPayload = {
+        rental_income_id: rentalId,
+        year: payload.year,
+        quarter: quarterOf(payload.month_declared),
+        month: payload.month_declared,
+        tin: payload.tin,
+        payee_name: payload.tenant_name,
+        atc: payload.atc,
+        income_payment: payload.gross,
+        tax_withheld: taxWithheld,
+        invoice_ref: payload.rent_period,
+      };
+      const { error } = await sb.from("withholding_2307").upsert(whPayload, { onConflict: "rental_income_id" });
+      if (error) toast("Rental income saved, but the linked 2307 failed: " + error.message, true);
+    } else {
+      // No tax withheld (any more) — remove a previously auto-generated 2307 for this rental row, if any.
+      await sb.from("withholding_2307").delete().eq("rental_income_id", rentalId);
+    }
   }
   function resetRentalForm() {
     $("rental-form").reset();
@@ -852,8 +891,12 @@
   }
   async function loadRental() {
     if (!requireDb()) return;
-    const { data: rows, error } = await sb.from("rental_income").select("*").order("month_declared", { ascending: false }).limit(500);
+    const [{ data: rows, error }, { data: whLinks }] = await Promise.all([
+      sb.from("rental_income").select("*").order("month_declared", { ascending: false }).limit(500),
+      sb.from("withholding_2307").select("rental_income_id").not("rental_income_id", "is", null),
+    ]);
     if (error) return toast(error.message, true);
+    const has2307 = new Set((whLinks || []).map((w) => w.rental_income_id));
     const tb = $("rental-table").querySelector("tbody");
     tb.innerHTML = (rows || []).length
       ? rows.map((r) => `<tr>
@@ -861,12 +904,13 @@
           <td>${escapeHtml(r.room_no || "")}</td><td>${escapeHtml(r.tenant_name)}</td>
           <td class="num">₱ ${fmtMoney(r.gross)}</td><td class="num">₱ ${fmtMoney(r.tax_withheld)}</td>
           <td class="num">₱ ${fmtMoney(r.net)}</td><td>${escapeHtml(r.rent_period || "")}</td>
+          <td>${has2307.has(r.id) ? statusBadge("FULLY PAID") : statusBadge("N/A")}</td>
           <td class="row-actions">
             <button class="btn small" data-edit-rent="${r.id}">Edit</button>
             <button class="btn small danger" data-del-rent="${r.id}">Del</button>
           </td>
         </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="9">No rental income logged yet</td></tr>`;
+      : `<tr class="empty-row"><td colspan="10">No rental income logged yet</td></tr>`;
     tb.querySelectorAll("[data-edit-rent]").forEach((btn) =>
       btn.addEventListener("click", () => editRental(rows.find((r) => String(r.id) === btn.dataset.editRent)))
     );
