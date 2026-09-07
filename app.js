@@ -469,6 +469,255 @@
   }
 
   /* =====================================================================
+     EXPENSES: BULK IMPORT FROM EXCEL (receipt-scanning app export)
+     ===================================================================== */
+  const IMPORT_FIELD_LABELS = {
+    "": "(ignore this column)",
+    trx_date: "Date",
+    business_name: "Business / payee",
+    tin: "TIN",
+    amount: "Amount",
+    category: "Category",
+    mode_of_payment: "Mode of payment",
+    tax_type: "Tax type",
+    invoice_no: "Invoice / OR no.",
+    particulars: "Particulars / notes",
+  };
+  const IMPORT_FIELD_ORDER = ["trx_date", "business_name", "tin", "amount", "category", "mode_of_payment", "tax_type", "invoice_no", "particulars", ""];
+
+  function guessImportField(header, usedTargets) {
+    const h = String(header || "").toLowerCase().trim();
+    const rules = [
+      { key: "trx_date", test: (h) => /\bdate\b/.test(h) && !/month|quarter|qtr/.test(h) },
+      { key: "tax_type", test: (h) => /tax type|vat type|vat\/non-vat/.test(h) },
+      { key: "tin", test: (h) => /\btin\b/.test(h) },
+      { key: "business_name", test: (h) => /vendor|business|merchant|store|payee|supplier|shop/.test(h) },
+      { key: "amount", test: (h) => /\bamount\b/.test(h) && !/vat/.test(h) },
+      { key: "category", test: (h) => /\bcategory\b/.test(h) },
+      { key: "mode_of_payment", test: (h) => /mode of payment|payment mode|payment method/.test(h) },
+      { key: "invoice_no", test: (h) => /receipt.*or no|or no\.?$|receipt no|invoice no/.test(h) },
+      { key: "particulars", test: (h) => /description|particulars|notes|remarks|details/.test(h) },
+    ];
+    for (const rule of rules) {
+      if (rule.test(h) && !usedTargets.has(rule.key)) return rule.key;
+    }
+    return "";
+  }
+
+  function parseImportDate(v) {
+    if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0, 10);
+    if (typeof v === "number") {
+      const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+      if (!isNaN(d)) return d.toISOString().slice(0, 10);
+    }
+    const s = String(v || "").trim();
+    if (!s) return "";
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+      const d = new Date(s);
+      if (!isNaN(d)) return d.toISOString().slice(0, 10);
+    }
+    const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+    if (m) {
+      let [, a, b, y] = m;
+      if (y.length === 2) y = "20" + y;
+      const iso = `${y}-${a.padStart(2, "0")}-${b.padStart(2, "0")}`;
+      const d2 = new Date(iso);
+      if (!isNaN(d2)) return iso;
+    }
+    const d3 = new Date(s);
+    if (!isNaN(d3)) return d3.toISOString().slice(0, 10);
+    return "";
+  }
+
+  function parseImportAmount(v) {
+    if (typeof v === "number") return v;
+    const s = String(v || "").replace(/[₱,\s]/g, "");
+    if (!s) return NaN;
+    const n = Number(s);
+    return isNaN(n) ? NaN : n;
+  }
+
+  function normalizeTaxType(v) {
+    const s = String(v || "").toUpperCase().trim();
+    if (!s) return "";
+    if (s.includes("NON")) return "NVAT";
+    if (s === "VAT") return "VAT";
+    if (s.includes("EXEMPT")) return "EXEMPT";
+    if (s.includes("NOT") && s.includes("RECEIPT")) return "NOT BIR RECEIPT";
+    if (s === "NVAT") return "NVAT";
+    return "";
+  }
+
+  let importHeaders = [];
+  let importRawRows = [];
+  let importColMap = {};
+  let importPreviewRows = [];
+
+  function initExpensesImport() {
+    $("expenses-import-choose").addEventListener("click", () => $("expenses-import-file").click());
+    $("expenses-import-file").addEventListener("change", handleImportFile);
+    $("expenses-import-buildpreview").addEventListener("click", buildImportPreview);
+    $("expenses-import-cancel-map").addEventListener("click", resetImportPanel);
+    $("expenses-import-applydefaults").addEventListener("click", () => renderImportPreviewTable(true));
+    $("expenses-import-confirm").addEventListener("click", confirmImport);
+    $("expenses-import-cancel").addEventListener("click", resetImportPanel);
+  }
+
+  function handleImportFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!window.XLSX) {
+      toast("The Excel reader didn't load — check your internet connection and reload the page.", true);
+      return;
+    }
+    $("expenses-import-filename").textContent = file.name;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: "array", cellDates: true });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
+        if (!rows.length) { toast("That file looks empty.", true); return; }
+        importHeaders = rows[0].map((h) => String(h ?? "").trim());
+        importRawRows = rows.slice(1).filter((r) => r.some((c) => c !== "" && c !== null && c !== undefined));
+        if (!importRawRows.length) { toast("No data rows found below the header row.", true); return; }
+        renderImportMapping();
+      } catch (err) {
+        toast("Could not read that file: " + err.message, true);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function renderImportMapping() {
+    const usedTargets = new Set();
+    importColMap = {};
+    const html = importHeaders.map((h, i) => {
+      const guess = guessImportField(h, usedTargets);
+      if (guess) usedTargets.add(guess);
+      importColMap[i] = guess;
+      const opts = IMPORT_FIELD_ORDER.map(
+        (key) => `<option value="${key}" ${key === guess ? "selected" : ""}>${escapeHtml(IMPORT_FIELD_LABELS[key])}</option>`
+      ).join("");
+      return `<div class="field"><label>${escapeHtml(h || "(column " + (i + 1) + ")")}</label><select data-import-col="${i}">${opts}</select></div>`;
+    }).join("");
+    $("expenses-import-mapping-rows").innerHTML = html;
+    $("expenses-import-mapping-rows").querySelectorAll("[data-import-col]").forEach((sel) => {
+      sel.addEventListener("change", () => { importColMap[Number(sel.dataset.importCol)] = sel.value; });
+    });
+    $("expenses-import-mapping").style.display = "block";
+    $("expenses-import-preview").style.display = "none";
+  }
+
+  function buildImportPreview() {
+    importPreviewRows = importRawRows.map((row) => {
+      const rec = { trx_date: "", business_name: "", amount: NaN, category: "", mode_of_payment: "", tin: "", invoice_no: "", particulars: "", tax_type: "" };
+      Object.keys(importColMap).forEach((colIdx) => {
+        const field = importColMap[colIdx];
+        if (!field) return;
+        const raw = row[Number(colIdx)];
+        if (field === "trx_date") rec.trx_date = parseImportDate(raw);
+        else if (field === "amount") rec.amount = parseImportAmount(raw);
+        else if (field === "tax_type") rec.tax_type = normalizeTaxType(raw);
+        else rec[field] = String(raw ?? "").trim();
+      });
+      return rec;
+    });
+    if (!importPreviewRows.length) { toast("No data rows to preview.", true); return; }
+    renderImportPreviewTable();
+    $("expenses-import-preview").style.display = "block";
+  }
+
+  function renderImportPreviewTable(forceDefaultTaxType) {
+    const defaultTaxType = $("expenses-import-taxtype").value;
+    const taxOpts = ["VAT", "NVAT", "EXEMPT", "NOT BIR RECEIPT"];
+    const tb = $("expenses-import-table").querySelector("tbody");
+    tb.innerHTML = importPreviewRows.map((r, i) => {
+      const tt = forceDefaultTaxType ? defaultTaxType : (r.tax_type || defaultTaxType);
+      const amountVal = isNaN(r.amount) ? "" : r.amount;
+      return `<tr>
+        <td><input type="checkbox" data-imp-include="${i}" checked /></td>
+        <td><input type="date" data-imp-date="${i}" value="${r.trx_date || ""}" style="width:130px;" /></td>
+        <td><input type="text" data-imp-business="${i}" value="${escapeHtml(r.business_name)}" style="min-width:160px;" /></td>
+        <td class="num"><input type="number" step="0.01" data-imp-amount="${i}" value="${amountVal}" style="width:90px;text-align:right;" /></td>
+        <td><input type="text" data-imp-category="${i}" value="${escapeHtml(r.category)}" style="width:110px;" /></td>
+        <td><input type="text" data-imp-mode="${i}" value="${escapeHtml(r.mode_of_payment)}" style="width:90px;" /></td>
+        <td><select data-imp-taxtype="${i}">${taxOpts.map((o) => `<option value="${o}" ${o === tt ? "selected" : ""}>${o}</option>`).join("")}</select></td>
+        <td><button type="button" class="btn small danger" data-imp-remove="${i}">Remove</button></td>
+      </tr>`;
+    }).join("");
+    tb.querySelectorAll("[data-imp-remove]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        importPreviewRows.splice(Number(btn.dataset.impRemove), 1);
+        renderImportPreviewTable();
+      })
+    );
+    tb.querySelectorAll("[data-imp-include]").forEach((cb) => cb.addEventListener("change", updateImportSummary));
+    updateImportSummary();
+  }
+
+  function updateImportSummary() {
+    const total = importPreviewRows.reduce((a, r) => a + (isNaN(r.amount) ? 0 : Number(r.amount)), 0);
+    const includedCount = $("expenses-import-table").querySelectorAll("[data-imp-include]:checked").length;
+    $("expenses-import-summary").textContent =
+      `${importPreviewRows.length} row(s) parsed, ${includedCount} checked for import — total ₱ ${fmtMoney(total)}. Review the fields below, uncheck or fix any that look wrong, then import.`;
+  }
+
+  function resetImportPanel() {
+    importHeaders = []; importRawRows = []; importColMap = {}; importPreviewRows = [];
+    $("expenses-import-file").value = "";
+    $("expenses-import-filename").textContent = "";
+    $("expenses-import-mapping").style.display = "none";
+    $("expenses-import-preview").style.display = "none";
+  }
+
+  async function confirmImport() {
+    if (!requireDb()) return;
+    const scope = $("expenses-import-scope").value;
+    const rowsEl = $("expenses-import-table").querySelectorAll("tbody tr");
+    const payload = [];
+    let skipped = 0;
+    rowsEl.forEach((tr, i) => {
+      const include = tr.querySelector(`[data-imp-include="${i}"]`).checked;
+      if (!include) return;
+      const date = tr.querySelector(`[data-imp-date="${i}"]`).value;
+      const business = tr.querySelector(`[data-imp-business="${i}"]`).value.trim();
+      const amountRaw = tr.querySelector(`[data-imp-amount="${i}"]`).value;
+      const amount = amountRaw === "" ? NaN : Number(amountRaw);
+      const category = tr.querySelector(`[data-imp-category="${i}"]`).value.trim();
+      const mode = tr.querySelector(`[data-imp-mode="${i}"]`).value.trim();
+      const taxType = tr.querySelector(`[data-imp-taxtype="${i}"]`).value;
+      if (!date || !business || isNaN(amount)) { skipped++; return; }
+      payload.push({
+        trx_date: date,
+        business_name: business,
+        amount,
+        category: category || null,
+        mode_of_payment: mode || null,
+        business_scope: scope,
+        tax_type: taxType,
+        source: "excel-import",
+      });
+    });
+    if (!payload.length) return toast("Nothing valid to import — every row is missing a date, business name, or amount.", true);
+    const chunkSize = 200;
+    let imported = 0;
+    for (let i = 0; i < payload.length; i += chunkSize) {
+      const chunk = payload.slice(i, i + chunkSize);
+      const { error } = await sb.from("expenses").insert(chunk);
+      if (error) {
+        toast(`Imported ${imported} before an error: ${error.message}`, true);
+        loadExpenses();
+        return;
+      }
+      imported += chunk.length;
+    }
+    toast(`Imported ${imported} expense(s) from Excel${skipped ? `, skipped ${skipped} incomplete row(s)` : ""}`);
+    resetImportPanel();
+    loadExpenses();
+  }
+
+  /* =====================================================================
      RECEIVABLES
      ===================================================================== */
   async function loadReceivables() {
@@ -943,6 +1192,7 @@
   /* =====================================================================
      DAILY OPERATIONS REPORT (cash/sales summary + staff performance)
      ===================================================================== */
+  let lastExpCatRows = [];
   function initOpsReportForm() {
     $("opsreport-from").value = todayISO();
     $("opsreport-to").value = todayISO();
@@ -951,6 +1201,13 @@
       $("opsreport-from").value = todayISO();
       $("opsreport-to").value = todayISO();
       loadOpsReport();
+    });
+    $("opsreport-expcat-export").addEventListener("click", () => {
+      if (!lastExpCatRows.length) return toast("Nothing to export yet — run the report first", true);
+      downloadCSV("expenses_by_category.csv", lastExpCatRows, [
+        { label: "Category", key: "category" }, { label: "# Transactions", key: "count" },
+        { label: "Total", key: "total" }, { label: "% of expenses", get: (r) => r.pct.toFixed(1) },
+      ]);
     });
   }
 
@@ -963,7 +1220,7 @@
 
     const [{ data: sales, error: sErr }, { data: exp, error: eErr }] = await Promise.all([
       sb.from("sales").select("trx_date,total_amount,amount_received,balance,mode_of_payment,reference_person").gte("trx_date", from).lte("trx_date", to),
-      sb.from("expenses").select("trx_date,amount,mode_of_payment").gte("trx_date", from).lte("trx_date", to),
+      sb.from("expenses").select("trx_date,amount,mode_of_payment,category,business_name").gte("trx_date", from).lte("trx_date", to),
     ]);
     if (sErr) return toast(sErr.message, true);
     if (eErr) return toast(eErr.message, true);
@@ -1007,6 +1264,29 @@
           </tr>`;
         }).join("")
       : `<tr class="empty-row"><td colspan="4">No transactions in this period</td></tr>`;
+
+    // ---- expenses by category ----
+    const cats = {};
+    (exp || []).forEach((r) => {
+      const c = r.category || "(uncategorized)";
+      cats[c] = cats[c] || { count: 0, total: 0 };
+      cats[c].count += 1;
+      cats[c].total += Number(r.amount || 0);
+    });
+    const catNames = Object.keys(cats).sort((a, b) => cats[b].total - cats[a].total);
+    lastExpCatRows = catNames.map((c) => ({
+      category: c,
+      count: cats[c].count,
+      total: cats[c].total,
+      pct: totalExpenses > 0 ? (cats[c].total / totalExpenses) * 100 : 0,
+    }));
+    const ectb = $("opsreport-expcat-table").querySelector("tbody");
+    ectb.innerHTML = lastExpCatRows.length
+      ? lastExpCatRows.map((r) => `<tr>
+          <td>${escapeHtml(r.category)}</td><td class="num">${r.count}</td>
+          <td class="num">₱ ${fmtMoney(r.total)}</td><td class="num">${r.pct.toFixed(1)}%</td>
+        </tr>`).join("")
+      : `<tr class="empty-row"><td colspan="4">No expenses in this period</td></tr>`;
 
     // ---- staff performance ----
     const staff = {};
@@ -1090,6 +1370,7 @@
      ===================================================================== */
   initSalesForm();
   initExpensesForm();
+  initExpensesImport();
   initBillsForm();
   initInvoicesForm();
   initWithholdingForm();

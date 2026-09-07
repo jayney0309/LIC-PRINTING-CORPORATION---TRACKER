@@ -183,6 +183,60 @@
           <button class="btn small ghost" id="expenses-f-clear">Clear</button>
           <button class="btn small accent" id="expenses-export">Export CSV</button>
         </div>
+      </div>
+
+      <!-- ======================= EXPENSES: BULK IMPORT FROM EXCEL ======================= -->
+      <div class="panel" id="expenses-import-panel">
+        <div class="panel-head">
+          <h2>Bulk import from Excel</h2>
+          <span class="hint">Upload the Excel file exported from your receipt-scanning app</span>
+        </div>
+        <div class="filters">
+          <button type="button" class="btn" id="expenses-import-choose">Choose Excel file</button>
+          <input type="file" id="expenses-import-file" accept=".xlsx,.xls,.csv" style="display:none;" />
+          <span class="hint" id="expenses-import-filename"></span>
+        </div>
+
+        <div id="expenses-import-mapping" style="display:none;">
+          <p class="section-note">Match each column in your file to the right field below — guesses are pre-filled, fix any that look wrong, then build the preview.</p>
+          <div id="expenses-import-mapping-rows" class="form-grid"></div>
+          <div class="form-actions">
+            <button type="button" class="btn primary" id="expenses-import-buildpreview">Build preview</button>
+            <button type="button" class="btn ghost" id="expenses-import-cancel-map">Cancel</button>
+          </div>
+        </div>
+
+        <div id="expenses-import-preview" style="display:none;">
+          <div class="filters">
+            <div class="field"><label>Scope (applies to whole batch)</label>
+              <select id="expenses-import-scope">
+                <option value="LIC PRINTING SHOP">LIC Printing Shop</option>
+                <option value="OTHER">Other / not LIC</option>
+              </select>
+            </div>
+            <div class="field"><label>Default tax type (used where blank)</label>
+              <select id="expenses-import-taxtype">
+                <option value="VAT">VAT</option>
+                <option value="NVAT">Non-VAT</option>
+                <option value="EXEMPT">Exempt</option>
+                <option value="NOT BIR RECEIPT">Not a BIR receipt</option>
+              </select>
+            </div>
+            <button type="button" class="btn small ghost" id="expenses-import-applydefaults">Set every row's tax type to this</button>
+          </div>
+          <p class="section-note" id="expenses-import-summary"></p>
+          <div class="table-wrap"><table class="data" id="expenses-import-table">
+            <thead><tr>
+              <th></th><th>Date</th><th>Business / payee</th><th class="num">Amount</th><th>Category</th><th>Mode</th><th>Tax type</th><th></th>
+            </tr></thead>
+            <tbody></tbody>
+          </table></div>
+          <div class="form-actions">
+            <button type="button" class="btn primary" id="expenses-import-confirm">Import these expenses</button>
+            <button type="button" class="btn ghost" id="expenses-import-cancel">Cancel</button>
+            <span class="hint" id="expenses-import-msg"></span>
+          </div>
+        </div>
         <div class="table-wrap"><table class="data" id="expenses-table">
           <thead><tr>
             <th>Date</th><th>Business</th><th>Category</th><th>Tax type</th><th class="num">Amount</th><th>Mode</th><th>Actions</th>
@@ -239,7 +293,7 @@
 
     <!-- ======================= DAILY OPERATIONS REPORT ======================= -->
     <section id="view-opsreport" class="view">
-      <p class="section-note">Cash/sales summary for closing the register, plus a per-staff breakdown for the period you pick.</p>
+      <p class="section-note">Cash/sales summary for closing the register, an expenses-by-category breakdown, plus a per-staff breakdown for the period you pick.</p>
       <div class="panel">
         <div class="filters">
           <div class="field"><label>From</label><input type="date" id="opsreport-from" /></div>
@@ -262,6 +316,20 @@
           </tr></thead>
           <tbody></tbody>
         </table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Expenses by category</h2>
+          <span class="hint">Where the period's expenses went</span>
+        </div>
+        <div class="table-wrap"><table class="data" id="opsreport-expcat-table">
+          <thead><tr>
+            <th>Category</th><th class="num"># Transactions</th><th class="num">Total</th><th class="num">% of expenses</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <div class="form-actions"><button class="btn small accent" id="opsreport-expcat-export">Export CSV</button></div>
       </div>
 
       <div class="panel">
@@ -466,6 +534,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="config.js" onerror="console.warn('config.js not found — copy config.example.js to config.js')"></script>
 <script src="app.js"></script>
 </body>
