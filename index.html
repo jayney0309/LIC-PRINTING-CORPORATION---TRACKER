@@ -45,11 +45,13 @@
       <button class="nav-btn" data-view="opsreport"><span class="ic">&#9755;</span> Report</button>
       <button class="nav-btn" data-view="staff"><span class="ic">&#9755;</span> Staff</button>
 
-      <div class="nav-group-label">Tax &amp; compliance (5JS)</div>
-      <button class="nav-btn" data-view="invoices"><span class="ic">&#9755;</span> Issued Invoices</button>
-      <button class="nav-btn" data-view="withholding"><span class="ic">&#9755;</span> 2307 Register</button>
-      <button class="nav-btn" data-view="rental"><span class="ic">&#9755;</span> Rental Income</button>
-      <button class="nav-btn" data-view="reports"><span class="ic">&#9755;</span> Reports</button>
+      <div id="nav-admin-group">
+        <div class="nav-group-label">Tax &amp; compliance (5JS)</div>
+        <button class="nav-btn" data-view="invoices"><span class="ic">&#9755;</span> Sales Report</button>
+        <button class="nav-btn" data-view="withholding"><span class="ic">&#9755;</span> 2307 Register</button>
+        <button class="nav-btn" data-view="reports"><span class="ic">&#9755;</span> Reports</button>
+        <button class="nav-btn" data-view="incomestatement"><span class="ic">&#9755;</span> Income Statement</button>
+      </div>
     </nav>
 
     <div class="sidebar-foot">
@@ -106,6 +108,7 @@
 
     <!-- ======================= DAILY SALES ======================= -->
     <section id="view-sales" class="view">
+      <p class="section-note">Enter a "Tax withheld" amount if the customer withheld EWT before paying you — a matching 2307 (Received) is created automatically in the 2307 Register, so you don't have to enter it twice.</p>
       <div class="panel">
         <div class="panel-head"><h2 id="sales-form-title">Log a sale</h2></div>
         <form id="sales-form" class="form-grid">
@@ -117,7 +120,17 @@
           <div class="field"><label>Total amount</label><input type="number" step="0.01" min="0" id="sales-total" required /></div>
           <div class="field"><label>Amount received</label><input type="number" step="0.01" min="0" id="sales-received" value="0" /></div>
           <div class="field"><label>Mode of payment</label><input list="payment-modes" id="sales-mode" /></div>
-          <div class="field"><label>Invoice no.</label><input id="sales-invoice" placeholder="INV-..." /></div>
+          <div class="field"><label>Xero Invoice No.</label><input id="sales-invoice" placeholder="INV-..." /></div>
+          <div class="field"><label>Business entity</label>
+            <select id="sales-entity">
+              <option value="">(not set)</option>
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship</option>
+              <option value="CORPORATION">Corporation</option>
+            </select>
+          </div>
+          <div class="field"><label>Customer TIN</label><input id="sales-tin" placeholder="000-000-000-000" /></div>
+          <div class="field"><label>ATC</label><input id="sales-atc" placeholder="WC160..." /></div>
+          <div class="field"><label>Tax withheld</label><input type="number" step="0.01" min="0" id="sales-taxwithheld" placeholder="0.00" /></div>
           <div class="field"><label>BIR receipt no.</label><input id="sales-bir" /></div>
           <div class="field checkbox-field"><input type="checkbox" id="sales-walkin" /><label>Walk-in customer</label></div>
           <div class="field wide"><label>Description / job</label><input id="sales-description" /></div>
@@ -144,6 +157,13 @@
             </select>
           </div>
           <div class="field"><label>Search</label><input id="sales-f-search" placeholder="Tradename..." /></div>
+          <div class="field"><label>Entity</label>
+            <select id="sales-f-entity">
+              <option value="">All</option>
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship</option>
+              <option value="CORPORATION">Corporation</option>
+            </select>
+          </div>
           <button class="btn small" id="sales-f-apply">Filter</button>
           <button class="btn small ghost" id="sales-f-clear">Clear</button>
           <button class="btn small accent" id="sales-export">Export CSV</button>
@@ -151,7 +171,7 @@
         <div class="table-wrap"><table class="data" id="sales-table">
           <thead><tr>
             <th>Date</th><th>Tradename</th><th>Staff</th><th class="num">Total</th><th class="num">Received</th>
-            <th class="num">Balance</th><th>Status</th><th>Mode</th><th>Invoice</th><th>Actions</th>
+            <th class="num">Balance</th><th>Status</th><th>Mode</th><th>Xero Invoice</th><th>Entity</th><th>2307</th><th>Sales Rpt</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
@@ -160,6 +180,7 @@
 
     <!-- ======================= DAILY EXPENSES ======================= -->
     <section id="view-expenses" class="view">
+      <p class="section-note">Enter a "Tax withheld" amount if you deducted EWT before paying this vendor — a matching 2307 (Issued) is created automatically in the 2307 Register, so you don't have to enter it twice.</p>
       <div class="panel">
         <div class="panel-head"><h2 id="expenses-form-title">Log an expense</h2></div>
         <form id="expenses-form" class="form-grid">
@@ -185,6 +206,8 @@
           <div class="field"><label>Category</label><input list="expense-category-list" id="expenses-category" placeholder="FUEL, MATERIALS, ..." /></div>
           <div class="field"><label>Mode of payment</label><input list="payment-modes" id="expenses-mode" /></div>
           <div class="field"><label>Invoice / OR no.</label><input id="expenses-invoice" /></div>
+          <div class="field"><label>ATC</label><input id="expenses-atc" placeholder="WC160..." /></div>
+          <div class="field"><label>Tax withheld</label><input type="number" step="0.01" min="0" id="expenses-taxwithheld" placeholder="if EWT applies" /></div>
           <div class="field wide"><label>Particulars</label><input id="expenses-particulars" /></div>
           <div class="field wide"><label>Remarks</label><input id="expenses-remarks" /></div>
           <div class="form-actions wide">
@@ -342,11 +365,18 @@
 
     <!-- ======================= DAILY OPERATIONS REPORT ======================= -->
     <section id="view-opsreport" class="view">
-      <p class="section-note">Cash/sales summary for closing the register, an expenses-by-category breakdown, plus a per-staff breakdown for the period you pick.</p>
+      <p class="section-note">Cash/sales summary for closing the register, an expenses-by-category breakdown, plus a per-staff breakdown for the period you pick. The Entity filter splits Sales-related figures only — Expenses aren't tagged by entity, so those stay combined regardless of the filter.</p>
       <div class="panel">
         <div class="filters">
           <div class="field"><label>From</label><input type="date" id="opsreport-from" /></div>
           <div class="field"><label>To</label><input type="date" id="opsreport-to" /></div>
+          <div class="field"><label>Entity</label>
+            <select id="opsreport-entity">
+              <option value="">Combined (all entities)</option>
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship only</option>
+              <option value="CORPORATION">Corporation only</option>
+            </select>
+          </div>
           <button class="btn small" id="opsreport-apply">Run report</button>
           <button class="btn small ghost" id="opsreport-today">Today only</button>
         </div>
@@ -420,9 +450,9 @@
       </div>
     </section>
 
-    <!-- ======================= ISSUED INVOICES ======================= -->
+    <!-- ======================= SALES REPORT ======================= -->
     <section id="view-invoices" class="view">
-      <p class="section-note">The officially numbered Sales Invoices you issue for BIR — this feeds the VAT summary in Reports.</p>
+      <p class="section-note">The officially numbered Sales Invoices declared to BIR — this feeds the VAT summary in Reports and the Income Statement. Rows sync in automatically from Daily Sales whenever a BIR receipt no. is entered there, so you don't have to re-type them; older entries carried over from the Declarations sheet stay here as history. Use the form below only for adjustments or entries with no matching Daily Sales row. Net sales/VAT are computed by entity — LIC Printing Shop (Sole Proprietorship) is VAT-registered (Net = Gross ÷ 1.12); LIC Printing Corporation is Non-VAT, so Gross = Net and VAT shows ₱0.</p>
       <div class="panel">
         <div class="panel-head"><h2 id="invoices-form-title">Log an issued invoice</h2></div>
         <form id="invoices-form" class="form-grid">
@@ -432,8 +462,15 @@
           <div class="field"><label>Invoice no.</label><input id="invoices-invoiceno" required /></div>
           <div class="field"><label>TIN</label><input id="invoices-tin" /></div>
           <div class="field wide"><label>Customer name</label><input id="invoices-customer" required /></div>
+          <div class="field"><label>Business entity</label>
+            <select id="invoices-entity">
+              <option value="">(not set)</option>
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship</option>
+              <option value="CORPORATION">Corporation</option>
+            </select>
+          </div>
           <div class="field"><label>Gross sales (VAT incl.)</label><input type="number" step="0.01" id="invoices-gross" required /></div>
-          <div class="field"><label>Net sales</label><input type="number" step="0.01" id="invoices-net" placeholder="auto = gross / 1.12" /></div>
+          <div class="field"><label>Net sales</label><input type="number" step="0.01" id="invoices-net" placeholder="auto (VAT-based on entity)" /></div>
           <div class="field"><label>VAT</label><input type="number" step="0.01" id="invoices-vat" placeholder="auto" /></div>
           <div class="field"><label>EWT rate</label><input type="number" step="0.0001" id="invoices-ewtrate" placeholder="e.g. 0.02" /></div>
           <div class="field"><label>Withholding tax</label><input type="number" step="0.01" id="invoices-wtax" value="0" /></div>
@@ -448,17 +485,24 @@
         </form>
       </div>
       <div class="panel">
-        <div class="panel-head"><h2>Invoice register</h2></div>
+        <div class="panel-head"><h2>Sales report register</h2></div>
         <div class="filters">
           <div class="field"><label>Month</label><input type="month" id="invoices-f-month" /></div>
           <div class="field"><label>Search</label><input id="invoices-f-search" placeholder="Customer..." /></div>
+          <div class="field"><label>Entity</label>
+            <select id="invoices-f-entity">
+              <option value="">All</option>
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship</option>
+              <option value="CORPORATION">Corporation</option>
+            </select>
+          </div>
           <button class="btn small" id="invoices-f-apply">Filter</button>
           <button class="btn small ghost" id="invoices-f-clear">Clear</button>
           <button class="btn small accent" id="invoices-export">Export CSV</button>
         </div>
         <div class="table-wrap"><table class="data" id="invoices-table">
           <thead><tr>
-            <th>Month</th><th>Date</th><th>Invoice</th><th>Customer</th><th class="num">Gross</th>
+            <th>Month</th><th>Date</th><th>Invoice</th><th>Customer</th><th>Entity</th><th class="num">Gross</th>
             <th class="num">Net</th><th class="num">VAT</th><th class="num">WTax</th><th>2307</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
@@ -468,11 +512,17 @@
 
     <!-- ======================= 2307 REGISTER ======================= -->
     <section id="view-withholding" class="view">
-      <p class="section-note">Creditable withholding tax certificates (BIR Form 2307) received from clients paying for services.</p>
+      <p class="section-note">Creditable withholding tax certificates (BIR Form 2307) — RECEIVED are certificates you hold, proving a client withheld tax from a payment to you, and sync in automatically from Daily Sales when a "Tax withheld" amount is entered there; ISSUED are certificates you owe a vendor, because you withheld tax paying them, and sync in automatically from Daily Expenses the same way. Use the form below only for adjustments or entries with no matching sale/expense row.</p>
       <div class="panel">
         <div class="panel-head"><h2 id="withholding-form-title">Log a 2307</h2></div>
         <form id="withholding-form" class="form-grid">
           <input type="hidden" id="withholding-id" />
+          <div class="field"><label>Direction</label>
+            <select id="withholding-direction">
+              <option value="received">Received (client withheld from us)</option>
+              <option value="issued">Issued (we withheld from a vendor)</option>
+            </select>
+          </div>
           <div class="field"><label>Year</label><input type="number" id="withholding-year" required /></div>
           <div class="field"><label>Quarter</label>
             <select id="withholding-quarter">
@@ -501,54 +551,17 @@
           <div class="field"><label>Quarter</label>
             <select id="withholding-f-quarter"><option value="">All</option><option>Q1</option><option>Q2</option><option>Q3</option><option>Q4</option></select>
           </div>
+          <div class="field"><label>Direction</label>
+            <select id="withholding-f-direction"><option value="">All</option><option value="received">Received</option><option value="issued">Issued</option></select>
+          </div>
           <button class="btn small" id="withholding-f-apply">Filter</button>
           <button class="btn small ghost" id="withholding-f-clear">Clear</button>
           <button class="btn small accent" id="withholding-export">Export CSV</button>
         </div>
         <div class="table-wrap"><table class="data" id="withholding-table">
           <thead><tr>
-            <th>Year</th><th>Qtr</th><th>Month</th><th>Payee</th><th>ATC</th>
+            <th>Direction</th><th>Year</th><th>Qtr</th><th>Month</th><th>Payee</th><th>ATC</th>
             <th class="num">Income</th><th class="num">Tax withheld</th><th>Issued</th><th>Actions</th>
-          </tr></thead>
-          <tbody></tbody>
-        </table></div>
-      </div>
-    </section>
-
-    <!-- ======================= RENTAL INCOME ======================= -->
-    <section id="view-rental" class="view">
-      <p class="section-note">Room / space rental income (QAP alphalist) — separate from printing shop sales. Any entry with tax withheld automatically creates or updates the matching 2307 certificate in the 2307 Register, so you don't have to enter it twice.</p>
-      <div class="panel">
-        <div class="panel-head"><h2 id="rental-form-title">Log rental income</h2></div>
-        <form id="rental-form" class="form-grid">
-          <input type="hidden" id="rental-id" />
-          <div class="field"><label>Year</label><input type="number" id="rental-year" required /></div>
-          <div class="field"><label>Month declared</label><input type="month" id="rental-month" required /></div>
-          <div class="field"><label>Room no.</label><input id="rental-room" /></div>
-          <div class="field"><label>TIN</label><input id="rental-tin" /></div>
-          <div class="field wide"><label>Tenant name</label><input id="rental-tenant" required /></div>
-          <div class="field"><label>ATC</label><input id="rental-atc" placeholder="WI100..." /></div>
-          <div class="field"><label>Gross</label><input type="number" step="0.01" id="rental-gross" required /></div>
-          <div class="field"><label>Net taxable</label><input type="number" step="0.01" id="rental-nettaxable" /></div>
-          <div class="field"><label>VAT</label><input type="number" step="0.01" id="rental-vat" /></div>
-          <div class="field"><label>Tax withheld</label><input type="number" step="0.01" id="rental-taxwithheld" /></div>
-          <div class="field"><label>Net</label><input type="number" step="0.01" id="rental-net" /></div>
-          <div class="field wide"><label>Rent period</label><input id="rental-period" placeholder="e.g. SEP 2026 RENT" /></div>
-          <div class="field"><label>Date of payment</label><input type="date" id="rental-datepaid" /></div>
-          <div class="field"><label>Mode of payment</label><input list="payment-modes" id="rental-mode" /></div>
-          <div class="form-actions wide">
-            <button type="submit" class="btn primary">Save rental income</button>
-            <button type="button" class="btn ghost" id="rental-cancel-edit" style="display:none;">Cancel edit</button>
-            <span class="hint" id="rental-form-msg"></span>
-          </div>
-        </form>
-      </div>
-      <div class="panel">
-        <div class="panel-head"><h2>Rental register</h2></div>
-        <div class="table-wrap"><table class="data" id="rental-table">
-          <thead><tr>
-            <th>Year</th><th>Month</th><th>Room</th><th>Tenant</th><th class="num">Gross</th>
-            <th class="num">Tax withheld</th><th class="num">Net</th><th>Period</th><th>2307</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
@@ -560,7 +573,7 @@
       <div class="panel">
         <div class="panel-head">
           <h2>Monthly VAT summary</h2>
-          <span class="hint">Computed live from Issued Invoices + Expenses</span>
+          <span class="hint">Computed live from the Sales Report + Expenses</span>
         </div>
         <div class="table-wrap"><table class="data" id="reports-summary-table">
           <thead><tr>
@@ -585,6 +598,46 @@
           </tr></thead>
           <tbody></tbody>
         </table></div>
+      </div>
+    </section>
+
+    <!-- ======================= INCOME STATEMENT ======================= -->
+    <section id="view-incomestatement" class="view">
+      <p class="section-note">Revenue less expenses for the period you pick. Revenue comes from the Sales Report (the official BIR-facing sales record); expenses come from logged Expenses.</p>
+      <div class="panel">
+        <div class="filters">
+          <div class="field"><label>From</label><input type="date" id="incstmt-from" /></div>
+          <div class="field"><label>To</label><input type="date" id="incstmt-to" /></div>
+          <div class="field"><label>Entity</label>
+            <select id="incstmt-entity">
+              <option value="">Combined</option>
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship only</option>
+              <option value="CORPORATION">Corporation only</option>
+            </select>
+          </div>
+          <button class="btn small" id="incstmt-apply">Run</button>
+          <button class="btn small ghost" id="incstmt-ytd">This year</button>
+        </div>
+        <p class="section-note" style="margin-top:8px;">Entity filter applies to Revenue only (from the Sales Report) — Expenses aren't tagged by entity.</p>
+      </div>
+
+      <div class="card-grid" id="incstmt-cards"></div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Revenue</h2></div>
+        <div class="table-wrap"><table class="data" id="incstmt-revenue-table">
+          <thead><tr><th>Line</th><th class="num">Amount</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Expenses</h2></div>
+        <div class="table-wrap"><table class="data" id="incstmt-expenses-table">
+          <thead><tr><th>Category</th><th class="num">Amount</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+        <div class="form-actions"><button class="btn small accent" id="incstmt-export">Export CSV</button></div>
       </div>
     </section>
 

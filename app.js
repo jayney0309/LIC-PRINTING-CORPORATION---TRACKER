@@ -110,10 +110,17 @@
   // ---------------------------------------------------------------- auth gate
   let bootedAfterAuth = false;
 
+  const ADMIN_ONLY_VIEWS = ["invoices", "withholding", "reports", "incomestatement"];
+  let currentRole = "staff";
+
   function showAppShell(session) {
     $("login-screen").style.display = "none";
     $("app-shell").style.display = "flex";
-    $("signed-in-as").textContent = session?.user?.email ? "Signed in as " + session.user.email : "";
+    currentRole = session?.user?.user_metadata?.role === "admin" ? "admin" : "staff";
+    $("signed-in-as").textContent = session?.user?.email
+      ? `Signed in as ${session.user.email} (${currentRole === "admin" ? "Administrator" : "Employee"})`
+      : "";
+    $("nav-admin-group").style.display = currentRole === "admin" ? "" : "none";
     if (!bootedAfterAuth) {
       bootedAfterAuth = true;
       loadDashboard();
@@ -170,18 +177,22 @@
   }
 
   // ---------------------------------------------------------------- nav
-  const views = ["dashboard", "sales", "expenses", "receivables", "bills", "opsreport", "staff", "invoices", "withholding", "rental", "reports"];
+  const views = ["dashboard", "sales", "expenses", "receivables", "bills", "opsreport", "staff", "invoices", "withholding", "reports", "incomestatement"];
   const titles = {
     dashboard: "Dashboard", sales: "Daily Sales", expenses: "Daily Expenses", receivables: "Receivables",
-    bills: "Bill Tracker", opsreport: "Daily Operations Report", staff: "Staff", invoices: "Issued Invoices", withholding: "2307 Register", rental: "Rental Income", reports: "Reports",
+    bills: "Bill Tracker", opsreport: "Daily Operations Report", staff: "Staff", invoices: "Sales Report", withholding: "2307 Register", reports: "Reports", incomestatement: "Income Statement",
   };
   const loaded = {};
   const loaders = {
     dashboard: loadDashboard, sales: loadSales, expenses: loadExpenses, receivables: loadReceivables,
-    bills: loadBills, opsreport: loadOpsReport, staff: loadStaff, invoices: loadInvoices, withholding: loadWithholding, rental: loadRental, reports: loadReports,
+    bills: loadBills, opsreport: loadOpsReport, staff: loadStaff, invoices: loadInvoices, withholding: loadWithholding, reports: loadReports, incomestatement: loadIncomeStatement,
   };
 
   function showView(name) {
+    if (ADMIN_ONLY_VIEWS.includes(name) && currentRole !== "admin") {
+      toast("That section is restricted to administrator accounts.", true);
+      name = "dashboard";
+    }
     views.forEach((v) => {
       $("view-" + v).classList.toggle("active", v === name);
     });
@@ -319,19 +330,32 @@
         amount_received: Number($("sales-received").value || 0),
         mode_of_payment: $("sales-mode").value.trim() || null,
         invoice_no: $("sales-invoice").value.trim() || null,
+        business_entity: $("sales-entity").value || null,
+        tin: $("sales-tin").value.trim() || null,
+        atc: $("sales-atc").value.trim() || null,
+        tax_withheld: $("sales-taxwithheld").value ? Number($("sales-taxwithheld").value) : null,
         bir_receipt_no: $("sales-bir").value.trim() || null,
         is_walkin: $("sales-walkin").checked,
         description: $("sales-description").value.trim() || null,
         remarks: $("sales-remarks").value.trim() || null,
       };
-      let error;
+      let error, savedId = id || null;
       if (id) {
         ({ error } = await sb.from("sales").update(payload).eq("id", id));
       } else {
-        ({ error } = await sb.from("sales").insert(payload));
+        const { data, error: insErr } = await sb.from("sales").insert(payload).select("id").single();
+        error = insErr;
+        if (data) savedId = data.id;
       }
       if (error) return toast(error.message, true);
-      toast(id ? "Sale updated" : "Sale saved");
+      let msg = id ? "Sale updated" : "Sale saved";
+      if (savedId) {
+        await syncSaleWithholding(savedId, payload);
+        if (Number(payload.tax_withheld || 0) > 0) msg += " — 2307 (Received) synced";
+        await syncSalesReport(savedId, payload);
+        if ((payload.bir_receipt_no || "").trim()) msg += " — Sales Report synced";
+      }
+      toast(msg);
       resetSalesForm();
       loadSales();
       loadDashboard.dirty = true;
@@ -341,6 +365,7 @@
     $("sales-f-clear").addEventListener("click", () => {
       ["sales-f-from", "sales-f-to", "sales-f-search"].forEach((id) => ($(id).value = ""));
       $("sales-f-status").value = "";
+      $("sales-f-entity").value = "";
       loadSales();
     });
     $("sales-export").addEventListener("click", async () => {
@@ -351,7 +376,9 @@
         { label: "Staff", key: "reference_person" }, { label: "Total", key: "total_amount" },
         { label: "Received", key: "amount_received" }, { label: "Balance", key: "balance" },
         { label: "Status", key: "status" }, { label: "Mode", key: "mode_of_payment" },
-        { label: "Invoice No", key: "invoice_no" }, { label: "Remarks", key: "remarks" },
+        { label: "Xero Invoice No", key: "invoice_no" }, { label: "Business Entity", key: "business_entity" },
+        { label: "TIN", key: "tin" }, { label: "ATC", key: "atc" }, { label: "Tax Withheld", key: "tax_withheld" },
+        { label: "Remarks", key: "remarks" },
       ]);
     });
   }
@@ -363,20 +390,101 @@
     $("sales-form-title").textContent = "Log a sale";
     $("sales-cancel-edit").style.display = "none";
   }
+
+  // A sale with tax actually withheld means the customer is the withholding
+  // agent and owes US a 2307 (we hold it as a tax credit) — keep one
+  // withholding_2307 row (direction 'received') in sync with each sale row.
+  async function syncSaleWithholding(saleId, payload) {
+    const taxWithheld = Number(payload.tax_withheld || 0);
+    if (taxWithheld > 0) {
+      const monthStr = payload.trx_date.slice(0, 7);
+      const whPayload = {
+        sale_id: saleId,
+        direction: "received",
+        year: Number(payload.trx_date.slice(0, 4)),
+        quarter: quarterOf(monthStr),
+        month: monthStr + "-01",
+        tin: payload.tin,
+        payee_name: payload.tradename,
+        atc: payload.atc,
+        income_payment: payload.total_amount,
+        tax_withheld: taxWithheld,
+        invoice_ref: payload.invoice_no,
+      };
+      const { error } = await sb.from("withholding_2307").upsert(whPayload, { onConflict: "sale_id" });
+      if (error) toast("Sale saved, but the linked 2307 failed: " + error.message, true);
+    } else {
+      await sb.from("withholding_2307").delete().eq("sale_id", saleId);
+    }
+  }
+
+  // A sale with a BIR receipt number is an officially issued invoice for BIR
+  // purposes -- keep one issued_invoices row (linked by sale_id) in sync with
+  // it instead of re-typing it on the Sales Report page. Rows with no sale_id
+  // (carried over from the Declarations sheet) are never touched by this.
+  // LIC Printing Shop (Sole Proprietorship) is VAT-registered; LIC Printing
+  // Corporation is NON-VAT (percentage tax) -- non-VAT receipts show no VAT
+  // breakdown, so gross = net and VAT = 0 for that entity.
+  function computeNetVat(gross, entity) {
+    if (entity === "CORPORATION") return { net: gross, vat: 0 };
+    const net = gross / 1.12;
+    return { net, vat: gross - net };
+  }
+  async function syncSalesReport(saleId, payload) {
+    const receiptNo = (payload.bir_receipt_no || "").trim();
+    if (receiptNo) {
+      const gross = Number(payload.total_amount || 0);
+      const { net, vat } = computeNetVat(gross, payload.business_entity);
+      const taxWithheld = Number(payload.tax_withheld || 0);
+      const monthStr = payload.trx_date.slice(0, 7);
+      const invPayload = {
+        sale_id: saleId,
+        business_entity: payload.business_entity,
+        month_declared: monthStr + "-01",
+        invoice_date: payload.trx_date,
+        invoice_no: receiptNo,
+        tin: payload.tin,
+        customer_name: payload.tradename,
+        gross_sales: gross,
+        net_sales: net,
+        vat: vat,
+        withholding_tax: taxWithheld,
+        total_due: gross - taxWithheld,
+        with_2307: taxWithheld > 0,
+      };
+      const { error } = await sb.from("issued_invoices").upsert(invPayload, { onConflict: "sale_id" });
+      if (error) toast("Sale saved, but the linked Sales Report entry failed: " + error.message, true);
+    } else {
+      await sb.from("issued_invoices").delete().eq("sale_id", saleId);
+    }
+  }
   async function fetchSalesRows() {
     let q = sb.from("v_sales_status").select("*").order("trx_date", { ascending: false });
     const from = $("sales-f-from").value, to = $("sales-f-to").value, status = $("sales-f-status").value, search = $("sales-f-search").value.trim();
+    const entity = $("sales-f-entity").value;
     if (from) q = q.gte("trx_date", from);
     if (to) q = q.lte("trx_date", to);
     if (status) q = q.eq("status", status);
     if (search) q = q.ilike("tradename", `%${search}%`);
+    if (entity) q = q.eq("business_entity", entity);
     const { data, error } = await q.limit(1000);
     if (error) { toast(error.message, true); return []; }
     return data || [];
   }
+  function entityLabel(v) {
+    if (v === "SOLE PROPRIETORSHIP") return "Sole Prop";
+    if (v === "CORPORATION") return "Corp";
+    return "";
+  }
   async function loadSales() {
     if (!requireDb()) return;
-    const rows = await fetchSalesRows();
+    const [rows, { data: whLinks }, { data: invLinks }] = await Promise.all([
+      fetchSalesRows(),
+      sb.from("withholding_2307").select("sale_id").not("sale_id", "is", null),
+      sb.from("issued_invoices").select("sale_id").not("sale_id", "is", null),
+    ]);
+    const has2307 = new Set((whLinks || []).map((w) => w.sale_id));
+    const hasInvoice = new Set((invLinks || []).map((w) => w.sale_id));
     const tb = $("sales-table").querySelector("tbody");
     tb.innerHTML = rows.length
       ? rows.map((r) => `<tr>
@@ -384,12 +492,15 @@
           <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.amount_received)}</td>
           <td class="num">₱ ${fmtMoney(r.balance)}</td><td>${statusBadge(r.status)}</td>
           <td>${escapeHtml(r.mode_of_payment || "")}</td><td>${escapeHtml(r.invoice_no || "")}</td>
+          <td>${escapeHtml(entityLabel(r.business_entity))}</td>
+          <td>${has2307.has(r.id) ? '<span class="badge good">2307</span>' : ""}</td>
+          <td>${hasInvoice.has(r.id) ? '<span class="badge good">Filed</span>' : ""}</td>
           <td class="row-actions">
             <button class="btn small" data-edit-sale="${r.id}">Edit</button>
             <button class="btn small danger" data-del-sale="${r.id}">Del</button>
           </td>
         </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="10">No sales match these filters</td></tr>`;
+      : `<tr class="empty-row"><td colspan="13">No sales match these filters</td></tr>`;
 
     tb.querySelectorAll("[data-edit-sale]").forEach((btn) =>
       btn.addEventListener("click", () => editSale(rows.find((r) => String(r.id) === btn.dataset.editSale)))
@@ -409,6 +520,10 @@
     $("sales-received").value = r.amount_received;
     $("sales-mode").value = r.mode_of_payment || "";
     $("sales-invoice").value = r.invoice_no || "";
+    $("sales-entity").value = r.business_entity || "";
+    $("sales-tin").value = r.tin || "";
+    $("sales-atc").value = r.atc || "";
+    $("sales-taxwithheld").value = r.tax_withheld ?? "";
     $("sales-bir").value = r.bir_receipt_no || "";
     $("sales-walkin").checked = !!r.is_walkin;
     $("sales-description").value = r.description || "";
@@ -445,14 +560,23 @@
         category: $("expenses-category").value.trim() || null,
         mode_of_payment: $("expenses-mode").value.trim() || null,
         invoice_no: $("expenses-invoice").value.trim() || null,
+        atc: $("expenses-atc").value.trim() || null,
+        tax_withheld: $("expenses-taxwithheld").value ? Number($("expenses-taxwithheld").value) : null,
         particulars: $("expenses-particulars").value.trim() || null,
         remarks: $("expenses-remarks").value.trim() || null,
       };
-      let error;
-      if (id) ({ error } = await sb.from("expenses").update(payload).eq("id", id));
-      else ({ error } = await sb.from("expenses").insert(payload));
+      let error, savedId = id ? Number(id) : null;
+      if (id) {
+        ({ error } = await sb.from("expenses").update(payload).eq("id", id));
+      } else {
+        const res = await sb.from("expenses").insert(payload).select("id").single();
+        error = res.error;
+        savedId = res.data?.id ?? null;
+      }
       if (error) return toast(error.message, true);
-      toast(id ? "Expense updated" : "Expense saved");
+      if (savedId) await syncExpenseWithholding(savedId, payload);
+      const suffix = Number(payload.tax_withheld) > 0 ? " — 2307 (Issued) synced" : "";
+      toast((id ? "Expense updated" : "Expense saved") + suffix);
       resetExpensesForm();
       loadExpenses();
     });
@@ -469,7 +593,8 @@
         { label: "Date", key: "trx_date" }, { label: "Business", key: "business_name" },
         { label: "Category", key: "category" }, { label: "Tax Type", key: "tax_type" },
         { label: "Amount", key: "amount" }, { label: "Mode", key: "mode_of_payment" },
-        { label: "TIN", key: "tin" }, { label: "Particulars", key: "particulars" },
+        { label: "TIN", key: "tin" }, { label: "ATC", key: "atc" }, { label: "Tax Withheld", key: "tax_withheld" },
+        { label: "Particulars", key: "particulars" },
       ]);
     });
   }
@@ -479,6 +604,41 @@
     $("expenses-date").value = todayISO();
     $("expenses-form-title").textContent = "Log an expense";
     $("expenses-cancel-edit").style.display = "none";
+  }
+
+  function quarterOf(monthStr) {
+    // monthStr like "2026-09" or "2026-09-01"
+    const m = Number(monthStr.slice(5, 7));
+    return `Q${Math.floor((m - 1) / 3) + 1}`;
+  }
+
+  // An expense with tax actually withheld means WE owe the vendor a 2307
+  // (we're the withholding agent) — keep one withholding_2307 row (direction
+  // 'issued') in sync with each expense row instead of asking for the same
+  // numbers twice.
+  async function syncExpenseWithholding(expenseId, payload) {
+    const taxWithheld = Number(payload.tax_withheld || 0);
+    if (taxWithheld > 0) {
+      const monthStr = payload.trx_date.slice(0, 7);
+      const whPayload = {
+        expense_id: expenseId,
+        direction: "issued",
+        year: Number(payload.trx_date.slice(0, 4)),
+        quarter: quarterOf(monthStr),
+        month: monthStr + "-01",
+        tin: payload.tin,
+        payee_name: payload.business_name,
+        atc: payload.atc,
+        income_payment: payload.amount,
+        tax_withheld: taxWithheld,
+        invoice_ref: payload.invoice_no,
+      };
+      const { error } = await sb.from("withholding_2307").upsert(whPayload, { onConflict: "expense_id" });
+      if (error) toast("Expense saved, but the linked 2307 failed: " + error.message, true);
+    } else {
+      // No tax withheld (any more) — remove a previously auto-generated 2307 for this expense row, if any.
+      await sb.from("withholding_2307").delete().eq("expense_id", expenseId);
+    }
   }
   async function fetchExpensesRows() {
     let q = sb.from("expenses").select("*").order("trx_date", { ascending: false });
@@ -493,18 +653,23 @@
   }
   async function loadExpenses() {
     if (!requireDb()) return;
-    const rows = await fetchExpensesRows();
+    const [rows, { data: whLinks }] = await Promise.all([
+      fetchExpensesRows(),
+      sb.from("withholding_2307").select("expense_id").not("expense_id", "is", null),
+    ]);
+    const has2307 = new Set((whLinks || []).map((w) => w.expense_id));
     const tb = $("expenses-table").querySelector("tbody");
     tb.innerHTML = rows.length
       ? rows.map((r) => `<tr>
           <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.business_name)}</td><td>${escapeHtml(r.category || "")}</td>
           <td>${escapeHtml(r.tax_type || "")}</td><td class="num">₱ ${fmtMoney(r.amount)}</td><td>${escapeHtml(r.mode_of_payment || "")}</td>
+          <td>${has2307.has(r.id) ? '<span class="badge good">2307</span>' : ""}</td>
           <td class="row-actions">
             <button class="btn small" data-edit-exp="${r.id}">Edit</button>
             <button class="btn small danger" data-del-exp="${r.id}">Del</button>
           </td>
         </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="7">No expenses match these filters</td></tr>`;
+      : `<tr class="empty-row"><td colspan="8">No expenses match these filters</td></tr>`;
     tb.querySelectorAll("[data-edit-exp]").forEach((btn) =>
       btn.addEventListener("click", () => editExpense(rows.find((r) => String(r.id) === btn.dataset.editExp)))
     );
@@ -524,6 +689,8 @@
     $("expenses-category").value = r.category || "";
     $("expenses-mode").value = r.mode_of_payment || "";
     $("expenses-invoice").value = r.invoice_no || "";
+    $("expenses-atc").value = r.atc || "";
+    $("expenses-taxwithheld").value = r.tax_withheld ?? "";
     $("expenses-particulars").value = r.particulars || "";
     $("expenses-remarks").value = r.remarks || "";
     $("expenses-form-title").textContent = "Edit expense";
@@ -977,20 +1144,23 @@
   function initInvoicesForm() {
     $("invoices-month").value = monthISO();
     $("invoices-date").value = todayISO();
-    $("invoices-gross").addEventListener("input", () => {
+    function updateInvoicesPreview() {
       const gross = Number($("invoices-gross").value || 0);
       if (gross > 0) {
-        const net = gross / 1.12;
+        const { net, vat } = computeNetVat(gross, $("invoices-entity").value);
         $("invoices-net").placeholder = net.toFixed(2);
-        $("invoices-vat").placeholder = (gross - net).toFixed(2);
+        $("invoices-vat").placeholder = vat.toFixed(2);
       }
-    });
+    }
+    $("invoices-gross").addEventListener("input", updateInvoicesPreview);
+    $("invoices-entity").addEventListener("change", updateInvoicesPreview);
     $("invoices-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!requireDb()) return;
       const gross = Number($("invoices-gross").value || 0);
-      const net = $("invoices-net").value ? Number($("invoices-net").value) : gross / 1.12;
-      const vat = $("invoices-vat").value ? Number($("invoices-vat").value) : gross - net;
+      const auto = computeNetVat(gross, $("invoices-entity").value);
+      const net = $("invoices-net").value ? Number($("invoices-net").value) : auto.net;
+      const vat = $("invoices-vat").value ? Number($("invoices-vat").value) : auto.vat;
       const wtax = Number($("invoices-wtax").value || 0);
       const id = $("invoices-id").value;
       const payload = {
@@ -999,6 +1169,7 @@
         invoice_no: $("invoices-invoiceno").value.trim(),
         tin: $("invoices-tin").value.trim() || null,
         customer_name: $("invoices-customer").value.trim(),
+        business_entity: $("invoices-entity").value || null,
         gross_sales: gross,
         net_sales: net,
         vat: vat,
@@ -1022,14 +1193,16 @@
     $("invoices-f-clear").addEventListener("click", () => {
       $("invoices-f-month").value = "";
       $("invoices-f-search").value = "";
+      $("invoices-f-entity").value = "";
       loadInvoices();
     });
     $("invoices-export").addEventListener("click", async () => {
       if (!requireDb()) return;
       const rows = await fetchInvoicesRows();
-      downloadCSV("issued_invoices.csv", rows, [
+      downloadCSV("sales_report.csv", rows, [
         { label: "Month", key: "month_declared" }, { label: "Date", key: "invoice_date" },
         { label: "Invoice No", key: "invoice_no" }, { label: "TIN", key: "tin" }, { label: "Customer", key: "customer_name" },
+        { label: "Business Entity", key: "business_entity" },
         { label: "Gross", key: "gross_sales" }, { label: "Net", key: "net_sales" }, { label: "VAT", key: "vat" },
         { label: "Withholding Tax", key: "withholding_tax" }, { label: "With 2307", key: "with_2307" },
       ]);
@@ -1045,9 +1218,10 @@
   }
   async function fetchInvoicesRows() {
     let q = sb.from("issued_invoices").select("*").order("month_declared", { ascending: false });
-    const month = $("invoices-f-month").value, search = $("invoices-f-search").value.trim();
+    const month = $("invoices-f-month").value, search = $("invoices-f-search").value.trim(), entity = $("invoices-f-entity").value;
     if (month) q = q.eq("month_declared", month + "-01");
     if (search) q = q.ilike("customer_name", `%${search}%`);
+    if (entity) q = q.eq("business_entity", entity);
     const { data, error } = await q.limit(1000);
     if (error) { toast(error.message, true); return []; }
     return data || [];
@@ -1059,8 +1233,8 @@
     tb.innerHTML = rows.length
       ? rows.map((r) => `<tr>
           <td>${fmtMonth((r.month_declared || "").slice(0, 7))}</td><td>${fmtDate(r.invoice_date)}</td>
-          <td>${escapeHtml(r.invoice_no || "")}${r.cancelled ? ' <span class="badge bad">CANCELLED</span>' : ""}</td>
-          <td>${escapeHtml(r.customer_name)}</td><td class="num">₱ ${fmtMoney(r.gross_sales)}</td>
+          <td>${escapeHtml(r.invoice_no || "")}${r.cancelled ? ' <span class="badge bad">CANCELLED</span>' : ""}${r.sale_id ? ' <span class="badge neutral">auto</span>' : ""}</td>
+          <td>${escapeHtml(r.customer_name)}</td><td>${escapeHtml(entityLabel(r.business_entity))}</td><td class="num">₱ ${fmtMoney(r.gross_sales)}</td>
           <td class="num">₱ ${fmtMoney(r.net_sales)}</td><td class="num">₱ ${fmtMoney(r.vat)}</td>
           <td class="num">₱ ${fmtMoney(r.withholding_tax)}</td><td>${r.with_2307 ? statusBadge("FULLY PAID") : statusBadge("N/A")}</td>
           <td class="row-actions">
@@ -1068,7 +1242,7 @@
             <button class="btn small danger" data-del-inv="${r.id}">Del</button>
           </td>
         </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="10">No invoices match these filters</td></tr>`;
+      : `<tr class="empty-row"><td colspan="11">No invoices match these filters</td></tr>`;
     tb.querySelectorAll("[data-edit-inv]").forEach((btn) =>
       btn.addEventListener("click", () => editInvoice(rows.find((r) => String(r.id) === btn.dataset.editInv)))
     );
@@ -1084,6 +1258,7 @@
     $("invoices-invoiceno").value = r.invoice_no || "";
     $("invoices-tin").value = r.tin || "";
     $("invoices-customer").value = r.customer_name || "";
+    $("invoices-entity").value = r.business_entity || "";
     $("invoices-gross").value = r.gross_sales;
     $("invoices-net").value = r.net_sales ?? "";
     $("invoices-vat").value = r.vat ?? "";
@@ -1107,6 +1282,7 @@
       if (!requireDb()) return;
       const id = $("withholding-id").value;
       const payload = {
+        direction: $("withholding-direction").value || "received",
         year: Number($("withholding-year").value),
         quarter: $("withholding-quarter").value,
         month: $("withholding-month").value ? $("withholding-month").value + "-01" : null,
@@ -1131,13 +1307,14 @@
     $("withholding-f-clear").addEventListener("click", () => {
       $("withholding-f-year").value = "";
       $("withholding-f-quarter").value = "";
+      $("withholding-f-direction").value = "";
       loadWithholding();
     });
     $("withholding-export").addEventListener("click", async () => {
       if (!requireDb()) return;
       const rows = await fetchWithholdingRows();
       downloadCSV("withholding_2307.csv", rows, [
-        { label: "Year", key: "year" }, { label: "Quarter", key: "quarter" }, { label: "Month", key: "month" },
+        { label: "Direction", key: "direction" }, { label: "Year", key: "year" }, { label: "Quarter", key: "quarter" }, { label: "Month", key: "month" },
         { label: "TIN", key: "tin" }, { label: "Payee", key: "payee_name" }, { label: "ATC", key: "atc" },
         { label: "Income Payment", key: "income_payment" }, { label: "Tax Withheld", key: "tax_withheld" }, { label: "Issued", key: "issued" },
       ]);
@@ -1146,18 +1323,23 @@
   function resetWithholdingForm() {
     $("withholding-form").reset();
     $("withholding-id").value = "";
+    $("withholding-direction").value = "received";
     $("withholding-year").value = new Date().getFullYear();
     $("withholding-form-title").textContent = "Log a 2307";
     $("withholding-cancel-edit").style.display = "none";
   }
   async function fetchWithholdingRows() {
     let q = sb.from("withholding_2307").select("*").order("year", { ascending: false }).order("quarter", { ascending: false });
-    const year = $("withholding-f-year").value, qtr = $("withholding-f-quarter").value;
+    const year = $("withholding-f-year").value, qtr = $("withholding-f-quarter").value, direction = $("withholding-f-direction").value;
     if (year) q = q.eq("year", Number(year));
     if (qtr) q = q.eq("quarter", qtr);
+    if (direction) q = q.eq("direction", direction);
     const { data, error } = await q.limit(1000);
     if (error) { toast(error.message, true); return []; }
     return data || [];
+  }
+  function directionBadge(d) {
+    return d === "issued" ? '<span class="badge warn">Issued</span>' : '<span class="badge good">Received</span>';
   }
   async function loadWithholding() {
     if (!requireDb()) return;
@@ -1165,6 +1347,7 @@
     const tb = $("withholding-table").querySelector("tbody");
     tb.innerHTML = rows.length
       ? rows.map((r) => `<tr>
+          <td>${directionBadge(r.direction)}</td>
           <td>${r.year || ""}</td><td>${escapeHtml(r.quarter || "")}</td><td>${r.month ? fmtMonth(r.month.slice(0, 7)) : ""}</td>
           <td>${escapeHtml(r.payee_name)}</td><td>${escapeHtml(r.atc || "")}</td>
           <td class="num">₱ ${fmtMoney(r.income_payment)}</td><td class="num">₱ ${fmtMoney(r.tax_withheld)}</td>
@@ -1174,7 +1357,7 @@
             <button class="btn small danger" data-del-wh="${r.id}">Del</button>
           </td>
         </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="9">No 2307s match these filters</td></tr>`;
+      : `<tr class="empty-row"><td colspan="10">No 2307s match these filters</td></tr>`;
     tb.querySelectorAll("[data-edit-wh]").forEach((btn) =>
       btn.addEventListener("click", () => editWithholding(rows.find((r) => String(r.id) === btn.dataset.editWh)))
     );
@@ -1185,6 +1368,7 @@
   function editWithholding(r) {
     if (!r) return;
     $("withholding-id").value = r.id;
+    $("withholding-direction").value = r.direction || "received";
     $("withholding-year").value = r.year || "";
     $("withholding-quarter").value = r.quarter || "Q1";
     $("withholding-month").value = r.month ? r.month.slice(0, 7) : "";
@@ -1197,140 +1381,6 @@
     $("withholding-issued").checked = !!r.issued;
     $("withholding-form-title").textContent = "Edit 2307";
     $("withholding-cancel-edit").style.display = "inline-block";
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  /* =====================================================================
-     RENTAL INCOME (QAP)
-     ===================================================================== */
-  function initRentalForm() {
-    $("rental-year").value = new Date().getFullYear();
-    $("rental-month").value = monthISO();
-    $("rental-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      if (!requireDb()) return;
-      const id = $("rental-id").value;
-      const payload = {
-        year: Number($("rental-year").value),
-        month_declared: $("rental-month").value + "-01",
-        room_no: $("rental-room").value.trim() || null,
-        tin: $("rental-tin").value.trim() || null,
-        tenant_name: $("rental-tenant").value.trim(),
-        atc: $("rental-atc").value.trim() || null,
-        gross: Number($("rental-gross").value || 0),
-        net_taxable: $("rental-nettaxable").value ? Number($("rental-nettaxable").value) : null,
-        vat: $("rental-vat").value ? Number($("rental-vat").value) : null,
-        tax_withheld: $("rental-taxwithheld").value ? Number($("rental-taxwithheld").value) : null,
-        net: $("rental-net").value ? Number($("rental-net").value) : null,
-        rent_period: $("rental-period").value.trim() || null,
-        date_of_payment: $("rental-datepaid").value || null,
-        mode_of_payment: $("rental-mode").value.trim() || null,
-      };
-      let error, savedId = id ? Number(id) : null;
-      if (id) {
-        ({ error } = await sb.from("rental_income").update(payload).eq("id", id));
-      } else {
-        const res = await sb.from("rental_income").insert(payload).select("id").single();
-        error = res.error;
-        savedId = res.data?.id ?? null;
-      }
-      if (error) return toast(error.message, true);
-      if (savedId) await syncRentalWithholding(savedId, payload);
-      const suffix = Number(payload.tax_withheld) > 0 ? " — 2307 synced" : "";
-      toast((id ? "Rental income updated" : "Rental income saved") + suffix);
-      resetRentalForm();
-      loadRental();
-    });
-    $("rental-cancel-edit").addEventListener("click", resetRentalForm);
-  }
-
-  function quarterOf(monthStr) {
-    // monthStr like "2026-09" or "2026-09-01"
-    const m = Number(monthStr.slice(5, 7));
-    return `Q${Math.floor((m - 1) / 3) + 1}`;
-  }
-
-  // Every rental payment with tax actually withheld implies a 2307 the
-  // tenant issued — keep one withholding_2307 row in sync with each
-  // rental_income row instead of asking for the same numbers twice.
-  async function syncRentalWithholding(rentalId, payload) {
-    const taxWithheld = Number(payload.tax_withheld || 0);
-    if (taxWithheld > 0) {
-      const whPayload = {
-        rental_income_id: rentalId,
-        year: payload.year,
-        quarter: quarterOf(payload.month_declared),
-        month: payload.month_declared,
-        tin: payload.tin,
-        payee_name: payload.tenant_name,
-        atc: payload.atc,
-        income_payment: payload.gross,
-        tax_withheld: taxWithheld,
-        invoice_ref: payload.rent_period,
-      };
-      const { error } = await sb.from("withholding_2307").upsert(whPayload, { onConflict: "rental_income_id" });
-      if (error) toast("Rental income saved, but the linked 2307 failed: " + error.message, true);
-    } else {
-      // No tax withheld (any more) — remove a previously auto-generated 2307 for this rental row, if any.
-      await sb.from("withholding_2307").delete().eq("rental_income_id", rentalId);
-    }
-  }
-  function resetRentalForm() {
-    $("rental-form").reset();
-    $("rental-id").value = "";
-    $("rental-year").value = new Date().getFullYear();
-    $("rental-month").value = monthISO();
-    $("rental-form-title").textContent = "Log rental income";
-    $("rental-cancel-edit").style.display = "none";
-  }
-  async function loadRental() {
-    if (!requireDb()) return;
-    const [{ data: rows, error }, { data: whLinks }] = await Promise.all([
-      sb.from("rental_income").select("*").order("month_declared", { ascending: false }).limit(500),
-      sb.from("withholding_2307").select("rental_income_id").not("rental_income_id", "is", null),
-    ]);
-    if (error) return toast(error.message, true);
-    const has2307 = new Set((whLinks || []).map((w) => w.rental_income_id));
-    const tb = $("rental-table").querySelector("tbody");
-    tb.innerHTML = (rows || []).length
-      ? rows.map((r) => `<tr>
-          <td>${r.year || ""}</td><td>${r.month_declared ? fmtMonth(r.month_declared.slice(0, 7)) : ""}</td>
-          <td>${escapeHtml(r.room_no || "")}</td><td>${escapeHtml(r.tenant_name)}</td>
-          <td class="num">₱ ${fmtMoney(r.gross)}</td><td class="num">₱ ${fmtMoney(r.tax_withheld)}</td>
-          <td class="num">₱ ${fmtMoney(r.net)}</td><td>${escapeHtml(r.rent_period || "")}</td>
-          <td>${has2307.has(r.id) ? statusBadge("FULLY PAID") : statusBadge("N/A")}</td>
-          <td class="row-actions">
-            <button class="btn small" data-edit-rent="${r.id}">Edit</button>
-            <button class="btn small danger" data-del-rent="${r.id}">Del</button>
-          </td>
-        </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="10">No rental income logged yet</td></tr>`;
-    tb.querySelectorAll("[data-edit-rent]").forEach((btn) =>
-      btn.addEventListener("click", () => editRental(rows.find((r) => String(r.id) === btn.dataset.editRent)))
-    );
-    tb.querySelectorAll("[data-del-rent]").forEach((btn) =>
-      btn.addEventListener("click", () => deleteRow("rental_income", btn.dataset.delRent, loadRental))
-    );
-  }
-  function editRental(r) {
-    if (!r) return;
-    $("rental-id").value = r.id;
-    $("rental-year").value = r.year || "";
-    $("rental-month").value = r.month_declared ? r.month_declared.slice(0, 7) : "";
-    $("rental-room").value = r.room_no || "";
-    $("rental-tin").value = r.tin || "";
-    $("rental-tenant").value = r.tenant_name || "";
-    $("rental-atc").value = r.atc || "";
-    $("rental-gross").value = r.gross;
-    $("rental-nettaxable").value = r.net_taxable ?? "";
-    $("rental-vat").value = r.vat ?? "";
-    $("rental-taxwithheld").value = r.tax_withheld ?? "";
-    $("rental-net").value = r.net ?? "";
-    $("rental-period").value = r.rent_period || "";
-    $("rental-datepaid").value = r.date_of_payment || "";
-    $("rental-mode").value = r.mode_of_payment || "";
-    $("rental-form-title").textContent = "Edit rental income";
-    $("rental-cancel-edit").style.display = "inline-block";
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -1362,9 +1412,13 @@
     if (!$("opsreport-to").value) $("opsreport-to").value = todayISO();
     const from = $("opsreport-from").value;
     const to = $("opsreport-to").value;
+    const entity = $("opsreport-entity").value;
+
+    let salesQuery = sb.from("sales").select("trx_date,total_amount,amount_received,balance,mode_of_payment,reference_person,business_entity").gte("trx_date", from).lte("trx_date", to);
+    if (entity) salesQuery = salesQuery.eq("business_entity", entity);
 
     const [{ data: sales, error: sErr }, { data: exp, error: eErr }] = await Promise.all([
-      sb.from("sales").select("trx_date,total_amount,amount_received,balance,mode_of_payment,reference_person").gte("trx_date", from).lte("trx_date", to),
+      salesQuery,
       sb.from("expenses").select("trx_date,amount,mode_of_payment,category,business_name").gte("trx_date", from).lte("trx_date", to),
     ]);
     if (sErr) return toast(sErr.message, true);
@@ -1507,6 +1561,89 @@
   }
 
   /* =====================================================================
+     INCOME STATEMENT (Revenue from Issued Invoices, less Expenses)
+     ===================================================================== */
+  let lastIncStmtExpRows = [];
+  function initIncomeStatementForm() {
+    const y = new Date().getFullYear();
+    $("incstmt-from").value = `${y}-01-01`;
+    $("incstmt-to").value = todayISO();
+    $("incstmt-apply").addEventListener("click", loadIncomeStatement);
+    $("incstmt-entity").addEventListener("change", loadIncomeStatement);
+    $("incstmt-ytd").addEventListener("click", () => {
+      const yy = new Date().getFullYear();
+      $("incstmt-from").value = `${yy}-01-01`;
+      $("incstmt-to").value = todayISO();
+      loadIncomeStatement();
+    });
+    $("incstmt-export").addEventListener("click", () => {
+      if (!lastIncStmtExpRows.length) return toast("Nothing to export yet — run the report first", true);
+      downloadCSV("income_statement_expenses.csv", lastIncStmtExpRows, [
+        { label: "Category", key: "category" },
+        { label: "Amount", key: "amount" },
+      ]);
+    });
+  }
+
+  async function loadIncomeStatement() {
+    if (!requireDb()) return;
+    if (!$("incstmt-from").value) $("incstmt-from").value = `${new Date().getFullYear()}-01-01`;
+    if (!$("incstmt-to").value) $("incstmt-to").value = todayISO();
+    const from = $("incstmt-from").value;
+    const to = $("incstmt-to").value;
+    const entity = $("incstmt-entity").value;
+
+    let invQuery = sb.from("issued_invoices").select("gross_sales,net_sales,vat,cancelled,month_declared,business_entity").gte("month_declared", from).lte("month_declared", to);
+    if (entity) invQuery = invQuery.eq("business_entity", entity);
+    const [{ data: inv, error: iErr }, { data: exp, error: eErr }] = await Promise.all([
+      invQuery,
+      sb.from("expenses").select("amount,category").gte("trx_date", from).lte("trx_date", to),
+    ]);
+    if (iErr) return toast(iErr.message, true);
+    if (eErr) return toast(eErr.message, true);
+
+    const activeInv = (inv || []).filter((r) => !r.cancelled);
+    const grossSales = activeInv.reduce((a, r) => a + Number(r.gross_sales || 0), 0);
+    const vatOnSales = activeInv.reduce((a, r) => a + Number(r.vat || 0), 0);
+    const netSales = activeInv.reduce((a, r) => {
+      const rowNet = r.net_sales != null ? Number(r.net_sales) : Number(r.gross_sales || 0) - Number(r.vat || 0);
+      return a + rowNet;
+    }, 0);
+    const totalExpenses = (exp || []).reduce((a, r) => a + Number(r.amount || 0), 0);
+    const netIncome = netSales - totalExpenses;
+
+    function card(label, value, cls) {
+      return `<div class="stat-card"><div class="label">${label}</div><div class="value ${cls}">₱ ${value}</div></div>`;
+    }
+    $("incstmt-cards").innerHTML = [
+      card("Net sales (revenue)", fmtMoney(netSales), "good"),
+      card("Total expenses", fmtMoney(totalExpenses), "bad"),
+      card("Net income", fmtMoney(netIncome), netIncome >= 0 ? "good" : "bad"),
+    ].join("");
+
+    const rtb = $("incstmt-revenue-table").querySelector("tbody");
+    rtb.innerHTML = `
+      <tr><td>Gross sales</td><td class="num">₱ ${fmtMoney(grossSales)}</td></tr>
+      <tr><td>Less: VAT on sales</td><td class="num">(₱ ${fmtMoney(vatOnSales)})</td></tr>
+      <tr><td><strong>Net sales</strong></td><td class="num"><strong>₱ ${fmtMoney(netSales)}</strong></td></tr>
+    `;
+
+    const cats = {};
+    (exp || []).forEach((r) => {
+      const c = r.category || "(uncategorized)";
+      cats[c] = (cats[c] || 0) + Number(r.amount || 0);
+    });
+    const catNames = Object.keys(cats).sort((a, b) => cats[b] - cats[a]);
+    lastIncStmtExpRows = catNames.map((c) => ({ category: c, amount: cats[c] }));
+    const etb = $("incstmt-expenses-table").querySelector("tbody");
+    etb.innerHTML =
+      (catNames.length
+        ? catNames.map((c) => `<tr><td>${escapeHtml(c)}</td><td class="num">₱ ${fmtMoney(cats[c])}</td></tr>`).join("")
+        : `<tr class="empty-row"><td colspan="2">No expenses in this period</td></tr>`) +
+      `<tr><td><strong>Total expenses</strong></td><td class="num"><strong>₱ ${fmtMoney(totalExpenses)}</strong></td></tr>`;
+  }
+
+  /* =====================================================================
      REPORTS
      ===================================================================== */
   let lastSummaryRows = [];
@@ -1569,8 +1706,8 @@
   initBillsForm();
   initInvoicesForm();
   initWithholdingForm();
-  initRentalForm();
   initOpsReportForm();
   initStaffForm();
+  initIncomeStatementForm();
   initAuthGate();
 })();
