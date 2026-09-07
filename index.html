@@ -297,6 +297,13 @@
           <div class="field"><label>From</label><input type="date" id="expenses-f-from" /></div>
           <div class="field"><label>To</label><input type="date" id="expenses-f-to" /></div>
           <div class="field"><label>Category</label><input id="expenses-f-category" placeholder="e.g. FUEL" /></div>
+          <div class="field"><label>Withholding</label>
+            <select id="expenses-f-withholding">
+              <option value="">All</option>
+              <option value="with">With tax withheld only</option>
+              <option value="without">No tax withheld</option>
+            </select>
+          </div>
           <div class="field"><label>Search</label><input id="expenses-f-search" placeholder="Business name..." /></div>
           <button class="btn small accent" id="expenses-f-apply">Search</button>
           <button class="btn small ghost" id="expenses-f-clear">Clear</button>
@@ -626,6 +633,12 @@
           <h2>Monthly VAT summary</h2>
           <span class="hint">Computed live from the Sales Report + Expenses</span>
         </div>
+        <div class="filters">
+          <div class="field"><label>Year</label><input type="number" id="reports-f-year" placeholder="e.g. 2026" /></div>
+          <div class="field"><label>Search</label><input id="reports-f-search" placeholder="e.g. January or 2026" /></div>
+          <button class="btn small accent" id="reports-f-apply">Search</button>
+          <button class="btn small ghost" id="reports-f-clear">Clear</button>
+        </div>
         <div class="table-wrap"><table class="data" id="reports-summary-table">
           <thead><tr>
             <th>Month</th><th class="num">Gross sales</th><th class="num">Net sales</th><th class="num">VAT on sales</th>
@@ -641,6 +654,12 @@
         <div class="panel-head">
           <h2>Historical declarations archive</h2>
           <span class="hint">Read-only — imported from your old records for reference</span>
+        </div>
+        <div class="filters">
+          <div class="field"><label>Year</label><input type="number" id="reports-hist-f-year" placeholder="e.g. 2024" /></div>
+          <div class="field"><label>Search</label><input id="reports-hist-f-search" placeholder="Name..." /></div>
+          <button class="btn small accent" id="reports-hist-f-apply">Search</button>
+          <button class="btn small ghost" id="reports-hist-f-clear">Clear</button>
         </div>
         <div class="table-wrap"><table class="data" id="reports-history-table">
           <thead><tr>

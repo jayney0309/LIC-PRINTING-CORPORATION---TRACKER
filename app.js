@@ -641,9 +641,10 @@
     $("expenses-f-search").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); loadExpenses(); }
     });
-    ["expenses-f-from", "expenses-f-to"].forEach((id) => $(id).addEventListener("change", loadExpenses));
+    ["expenses-f-from", "expenses-f-to", "expenses-f-withholding"].forEach((id) => $(id).addEventListener("change", loadExpenses));
     $("expenses-f-clear").addEventListener("click", () => {
       ["expenses-f-from", "expenses-f-to", "expenses-f-category", "expenses-f-search"].forEach((id) => ($(id).value = ""));
+      $("expenses-f-withholding").value = "";
       loadExpenses();
     });
     $("expenses-export").addEventListener("click", async () => {
@@ -835,10 +836,13 @@
   async function fetchExpensesRows() {
     let q = sb.from("expenses").select("*").eq("business_entity", currentExpensesEntity).order("trx_date", { ascending: false });
     const from = $("expenses-f-from").value, to = $("expenses-f-to").value, cat = $("expenses-f-category").value.trim(), search = $("expenses-f-search").value.trim();
+    const withholding = $("expenses-f-withholding").value;
     if (from) q = q.gte("trx_date", from);
     if (to) q = q.lte("trx_date", to);
     if (cat) q = q.ilike("category", `%${cat}%`);
     if (search) q = q.ilike("business_name", `%${search}%`);
+    if (withholding === "with") q = q.gt("tax_withheld", 0);
+    else if (withholding === "without") q = q.or("tax_withheld.is.null,tax_withheld.eq.0");
     const { data, error } = await q.limit(1000);
     if (error) { toast(error.message, true); return []; }
     return data || [];
@@ -1987,8 +1991,32 @@
      REPORTS
      ===================================================================== */
   let lastSummaryRows = [];
+  let reportsWired = false;
   async function loadReports() {
     if (!requireDb()) return;
+    if (!reportsWired) {
+      reportsWired = true;
+      $("reports-f-apply").addEventListener("click", loadReports);
+      $("reports-f-year").addEventListener("change", loadReports);
+      $("reports-f-search").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); loadReports(); }
+      });
+      $("reports-f-clear").addEventListener("click", () => {
+        $("reports-f-year").value = "";
+        $("reports-f-search").value = "";
+        loadReports();
+      });
+      $("reports-hist-f-apply").addEventListener("click", loadReports);
+      $("reports-hist-f-year").addEventListener("change", loadReports);
+      $("reports-hist-f-search").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); loadReports(); }
+      });
+      $("reports-hist-f-clear").addEventListener("click", () => {
+        $("reports-hist-f-year").value = "";
+        $("reports-hist-f-search").value = "";
+        loadReports();
+      });
+    }
     const [{ data: sales }, { data: exp }] = await Promise.all([
       sb.from("v_monthly_summary").select("*"),
       sb.from("v_monthly_expenses").select("*"),
@@ -1996,9 +2024,14 @@
     const byMonth = {};
     (sales || []).forEach((s) => (byMonth[s.month] = { ...byMonth[s.month], ...s }));
     (exp || []).forEach((e) => (byMonth[e.month] = { ...byMonth[e.month], ...e }));
-    const rows = Object.keys(byMonth)
+    let rows = Object.keys(byMonth)
       .sort((a, b) => b.localeCompare(a))
       .map((m) => byMonth[m]);
+
+    const summaryYear = $("reports-f-year").value.trim();
+    const summarySearch = $("reports-f-search").value.trim().toLowerCase();
+    if (summaryYear) rows = rows.filter((r) => r.month.slice(0, 4) === summaryYear);
+    if (summarySearch) rows = rows.filter((r) => fmtMonth(r.month.slice(0, 7)).toLowerCase().includes(summarySearch) || r.month.includes(summarySearch));
     lastSummaryRows = rows;
 
     const tb = $("reports-summary-table").querySelector("tbody");
@@ -2015,7 +2048,12 @@
         }).join("")
       : `<tr class="empty-row"><td colspan="9">Log some issued invoices and expenses to see the summary</td></tr>`;
 
-    const { data: hist, error } = await sb.from("declarations_history").select("*").order("year", { ascending: false }).order("month", { ascending: false }).limit(500);
+    let histQuery = sb.from("declarations_history").select("*").order("year", { ascending: false }).order("month", { ascending: false });
+    const histYear = $("reports-hist-f-year").value.trim();
+    const histSearch = $("reports-hist-f-search").value.trim();
+    if (histYear) histQuery = histQuery.eq("year", Number(histYear));
+    if (histSearch) histQuery = histQuery.ilike("name", `%${histSearch}%`);
+    const { data: hist, error } = await histQuery.limit(500);
     if (!error) {
       const htb = $("reports-history-table").querySelector("tbody");
       htb.innerHTML = (hist || []).length
