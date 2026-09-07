@@ -7,7 +7,25 @@
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<div class="app">
+
+<div id="login-screen" class="login-screen">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="name" id="login-brand-name">LIC Printing Shop</div>
+      <div class="sub">Books &amp; Tax System</div>
+    </div>
+    <form id="login-form">
+      <div class="field wide"><label>Email</label><input type="email" id="login-email" required autocomplete="username" /></div>
+      <div class="field wide"><label>Password</label><input type="password" id="login-password" required autocomplete="current-password" /></div>
+      <div class="form-actions wide">
+        <button type="submit" class="btn primary" id="login-submit" style="width:100%;justify-content:center;">Sign in</button>
+      </div>
+      <p class="login-msg" id="login-msg"></p>
+    </form>
+  </div>
+</div>
+
+<div class="app" id="app-shell" style="display:none;">
 
   <aside class="sidebar">
     <div class="brand">
@@ -34,7 +52,11 @@
       <button class="nav-btn" data-view="reports"><span class="ic">&#9755;</span> Reports</button>
     </nav>
 
-    <div class="sidebar-foot">5JS Documentation &amp; Business Consultancy</div>
+    <div class="sidebar-foot">
+      5JS Documentation &amp; Business Consultancy
+      <div class="signed-in-as" id="signed-in-as"></div>
+      <button type="button" class="btn small ghost" id="logout-btn" style="margin-top:8px;width:100%;">Sign out</button>
+    </div>
   </aside>
 
   <main class="content">
@@ -173,19 +195,6 @@
         </form>
       </div>
 
-      <div class="panel">
-        <div class="panel-head"><h2>Expense log</h2></div>
-        <div class="filters">
-          <div class="field"><label>From</label><input type="date" id="expenses-f-from" /></div>
-          <div class="field"><label>To</label><input type="date" id="expenses-f-to" /></div>
-          <div class="field"><label>Category</label><input id="expenses-f-category" placeholder="e.g. FUEL" /></div>
-          <div class="field"><label>Search</label><input id="expenses-f-search" placeholder="Business name..." /></div>
-          <button class="btn small" id="expenses-f-apply">Filter</button>
-          <button class="btn small ghost" id="expenses-f-clear">Clear</button>
-          <button class="btn small accent" id="expenses-export">Export CSV</button>
-        </div>
-      </div>
-
       <!-- ======================= EXPENSES: BULK IMPORT FROM EXCEL ======================= -->
       <div class="panel" id="expenses-import-panel">
         <div class="panel-head">
@@ -237,6 +246,45 @@
             <button type="button" class="btn ghost" id="expenses-import-cancel">Cancel</button>
             <span class="hint" id="expenses-import-msg"></span>
           </div>
+        </div>
+      </div>
+
+      <!-- ======================= EXPENSES: FIND & REMOVE DUPLICATES ======================= -->
+      <div class="panel" id="expenses-dedupe-panel">
+        <div class="panel-head">
+          <h2>Find &amp; remove duplicate expenses</h2>
+          <span class="hint">Matches rows that share the same date + invoice/OR number</span>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="expenses-dedupe-scan">Scan for duplicates</button>
+          <span class="hint" id="expenses-dedupe-summary"></span>
+        </div>
+        <div id="expenses-dedupe-results" style="display:none;">
+          <p class="section-note">Rows flagged DUPLICATE are checked for deletion by default — the oldest entry in each matching group is kept. Uncheck any row you want to keep before deleting.</p>
+          <div class="table-wrap"><table class="data" id="expenses-dedupe-table">
+            <thead><tr>
+              <th></th><th>Date</th><th>Invoice / OR no.</th><th>Business</th><th class="num">Amount</th><th>Status</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table></div>
+          <div class="form-actions">
+            <button type="button" class="btn danger" id="expenses-dedupe-confirm">Delete checked duplicates</button>
+            <button type="button" class="btn ghost" id="expenses-dedupe-cancel">Cancel</button>
+            <span class="hint" id="expenses-dedupe-msg"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Expense log</h2></div>
+        <div class="filters">
+          <div class="field"><label>From</label><input type="date" id="expenses-f-from" /></div>
+          <div class="field"><label>To</label><input type="date" id="expenses-f-to" /></div>
+          <div class="field"><label>Category</label><input id="expenses-f-category" placeholder="e.g. FUEL" /></div>
+          <div class="field"><label>Search</label><input id="expenses-f-search" placeholder="Business name..." /></div>
+          <button class="btn small" id="expenses-f-apply">Filter</button>
+          <button class="btn small ghost" id="expenses-f-clear">Clear</button>
+          <button class="btn small accent" id="expenses-export">Export CSV</button>
         </div>
         <div class="table-wrap"><table class="data" id="expenses-table">
           <thead><tr>

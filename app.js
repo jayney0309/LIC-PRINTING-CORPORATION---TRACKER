@@ -20,6 +20,7 @@
   document.getElementById("config-banner").style.display = configOk ? "none" : "block";
   document.getElementById("brand-name").textContent = CONFIG.COMPANY_NAME || "LIC Printing Shop";
   document.getElementById("brand-sub").textContent = "Books & Tax System";
+  document.getElementById("login-brand-name").textContent = CONFIG.COMPANY_NAME || "LIC Printing Shop";
 
   document.getElementById("today-label").textContent = new Date().toLocaleDateString("en-PH", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
@@ -104,6 +105,68 @@
     if (bal <= 0) return "FULLY PAID";
     if (Number(received || 0) > 0) return "PARTIAL";
     return "UNPAID";
+  }
+
+  // ---------------------------------------------------------------- auth gate
+  let bootedAfterAuth = false;
+
+  function showAppShell(session) {
+    $("login-screen").style.display = "none";
+    $("app-shell").style.display = "flex";
+    $("signed-in-as").textContent = session?.user?.email ? "Signed in as " + session.user.email : "";
+    if (!bootedAfterAuth) {
+      bootedAfterAuth = true;
+      loadDashboard();
+      refreshDatalists();
+    }
+  }
+  function showLoginScreen() {
+    bootedAfterAuth = false;
+    $("app-shell").style.display = "none";
+    $("login-screen").style.display = "flex";
+    $("login-password").value = "";
+  }
+
+  async function initAuthGate() {
+    if (!sb) {
+      // No valid Supabase config yet — show the shell so the red config
+      // banner (and setup instructions) are visible instead of a login
+      // screen nobody can sign into.
+      $("login-screen").style.display = "none";
+      $("app-shell").style.display = "flex";
+      return;
+    }
+    const {
+      data: { session },
+    } = await sb.auth.getSession();
+    if (session) showAppShell(session);
+    else showLoginScreen();
+
+    sb.auth.onAuthStateChange((_event, session) => {
+      if (session) showAppShell(session);
+      else showLoginScreen();
+    });
+
+    $("login-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = $("login-email").value.trim();
+      const password = $("login-password").value;
+      const msg = $("login-msg");
+      const btn = $("login-submit");
+      msg.textContent = "";
+      msg.className = "login-msg";
+      btn.disabled = true;
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      btn.disabled = false;
+      if (error) {
+        msg.textContent = error.message;
+        return;
+      }
+    });
+
+    $("logout-btn").addEventListener("click", async () => {
+      await sb.auth.signOut();
+    });
   }
 
   // ---------------------------------------------------------------- nav
@@ -714,6 +777,88 @@
     }
     toast(`Imported ${imported} expense(s) from Excel${skipped ? `, skipped ${skipped} incomplete row(s)` : ""}`);
     resetImportPanel();
+    loadExpenses();
+  }
+
+  /* =====================================================================
+     EXPENSES: FIND & REMOVE DUPLICATES (same date + invoice/OR number)
+     ===================================================================== */
+  function initExpensesDedupe() {
+    $("expenses-dedupe-scan").addEventListener("click", scanForDuplicateExpenses);
+    $("expenses-dedupe-confirm").addEventListener("click", confirmDeleteDuplicateExpenses);
+    $("expenses-dedupe-cancel").addEventListener("click", () => {
+      dedupeCandidates = [];
+      $("expenses-dedupe-results").style.display = "none";
+      $("expenses-dedupe-summary").textContent = "";
+    });
+  }
+
+  let dedupeCandidates = [];
+  async function scanForDuplicateExpenses() {
+    if (!requireDb()) return;
+    $("expenses-dedupe-summary").textContent = "Scanning...";
+    const { data, error } = await sb
+      .from("expenses")
+      .select("id,trx_date,invoice_no,business_name,amount")
+      .order("trx_date", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(5000);
+    if (error) { $("expenses-dedupe-summary").textContent = ""; return toast(error.message, true); }
+
+    const groups = {};
+    (data || []).forEach((r) => {
+      const inv = String(r.invoice_no || "").trim();
+      if (!inv) return; // no invoice/OR number to match on — never treat these as duplicates
+      const key = r.trx_date + "||" + inv.toUpperCase();
+      groups[key] = groups[key] || [];
+      groups[key].push(r);
+    });
+
+    dedupeCandidates = [];
+    Object.values(groups)
+      .filter((g) => g.length > 1)
+      .forEach((g, gi) => {
+        g.forEach((row, idx) => dedupeCandidates.push({ ...row, groupIndex: gi, isFirst: idx === 0 }));
+      });
+
+    renderDedupeResults();
+  }
+
+  function renderDedupeResults() {
+    const panel = $("expenses-dedupe-results");
+    if (!dedupeCandidates.length) {
+      $("expenses-dedupe-summary").textContent = "No duplicates found (matched by same date + invoice/OR number).";
+      panel.style.display = "none";
+      return;
+    }
+    const groupCount = new Set(dedupeCandidates.map((r) => r.groupIndex)).size;
+    const toDeleteCount = dedupeCandidates.filter((r) => !r.isFirst).length;
+    $("expenses-dedupe-summary").textContent = `Found ${groupCount} matching group(s) — ${toDeleteCount} row(s) proposed for deletion.`;
+    const tb = $("expenses-dedupe-table").querySelector("tbody");
+    tb.innerHTML = dedupeCandidates
+      .map((r, i) => `<tr style="${r.isFirst ? "" : "background:var(--warn-soft);"}">
+          <td><input type="checkbox" data-dedupe-del="${i}" ${r.isFirst ? "" : "checked"} /></td>
+          <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.invoice_no || "")}</td>
+          <td>${escapeHtml(r.business_name || "")}</td><td class="num">₱ ${fmtMoney(r.amount)}</td>
+          <td>${r.isFirst ? '<span class="badge good">KEEP (oldest)</span>' : '<span class="badge warn">DUPLICATE</span>'}</td>
+        </tr>`)
+      .join("");
+    panel.style.display = "block";
+  }
+
+  async function confirmDeleteDuplicateExpenses() {
+    if (!requireDb()) return;
+    const checks = $("expenses-dedupe-table").querySelectorAll("[data-dedupe-del]");
+    const idsToDelete = [];
+    checks.forEach((cb, i) => { if (cb.checked) idsToDelete.push(dedupeCandidates[i].id); });
+    if (!idsToDelete.length) return toast("Nothing checked for deletion", true);
+    if (!confirm(`Delete ${idsToDelete.length} duplicate expense(s)? This can't be undone.`)) return;
+    const { error } = await sb.from("expenses").delete().in("id", idsToDelete);
+    if (error) return toast(error.message, true);
+    toast(`Deleted ${idsToDelete.length} duplicate expense(s)`);
+    dedupeCandidates = [];
+    $("expenses-dedupe-results").style.display = "none";
+    $("expenses-dedupe-summary").textContent = "";
     loadExpenses();
   }
 
@@ -1420,14 +1565,12 @@
   initSalesForm();
   initExpensesForm();
   initExpensesImport();
+  initExpensesDedupe();
   initBillsForm();
   initInvoicesForm();
   initWithholdingForm();
   initRentalForm();
   initOpsReportForm();
   initStaffForm();
-  if (sb) {
-    loadDashboard();
-    refreshDatalists();
-  }
+  initAuthGate();
 })();
