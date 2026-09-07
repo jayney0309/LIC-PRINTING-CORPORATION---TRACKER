@@ -1225,9 +1225,28 @@
   /* =====================================================================
      RECEIVABLES
      ===================================================================== */
+  let receivablesWired = false;
   async function loadReceivables() {
     if (!requireDb()) return;
-    const { data, error } = await sb.from("v_sales_status").select("*").neq("balance", 0).order("trx_date", { ascending: true }).limit(500);
+    if (!receivablesWired) {
+      receivablesWired = true;
+      $("receivables-f-apply").addEventListener("click", loadReceivables);
+      $("receivables-f-entity").addEventListener("change", loadReceivables);
+      $("receivables-f-search").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); loadReceivables(); }
+      });
+      $("receivables-f-clear").addEventListener("click", () => {
+        $("receivables-f-search").value = "";
+        $("receivables-f-entity").value = "";
+        loadReceivables();
+      });
+    }
+    let q = sb.from("v_sales_status").select("*").neq("balance", 0).order("trx_date", { ascending: true });
+    const search = $("receivables-f-search").value.trim();
+    const entity = $("receivables-f-entity").value;
+    if (search) q = q.ilike("tradename", `%${search}%`);
+    if (entity) q = q.eq("business_entity", entity);
+    const { data, error } = await q.limit(500);
     if (error) return toast(error.message, true);
     const rows = data || [];
     const total = rows.reduce((a, r) => a + Number(r.balance || 0), 0);
@@ -1383,6 +1402,10 @@
     });
     $("invoices-cancel-edit").addEventListener("click", resetInvoicesForm);
     $("invoices-f-apply").addEventListener("click", loadInvoices);
+    $("invoices-f-search").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); loadInvoices(); }
+    });
+    ["invoices-f-month", "invoices-f-entity"].forEach((id) => $(id).addEventListener("change", loadInvoices));
     $("invoices-f-clear").addEventListener("click", () => {
       $("invoices-f-month").value = "";
       $("invoices-f-search").value = "";
@@ -1475,6 +1498,10 @@
     $("expreport-to").value = todayISO();
     $("expreport-apply").addEventListener("click", loadExpensesReport);
     $("expreport-entity").addEventListener("change", loadExpensesReport);
+    ["expreport-from", "expreport-to"].forEach((id) => $(id).addEventListener("change", loadExpensesReport));
+    $("expreport-search").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); loadExpensesReport(); }
+    });
     $("expreport-mtd").addEventListener("click", () => {
       const yy = new Date().getFullYear(), mm = String(new Date().getMonth() + 1).padStart(2, "0");
       $("expreport-from").value = `${yy}-${mm}-01`;
@@ -1498,9 +1525,11 @@
     const from = $("expreport-from").value;
     const to = $("expreport-to").value;
     const entity = $("expreport-entity").value;
+    const search = $("expreport-search").value.trim();
 
     let q = sb.from("expenses").select("*").gte("trx_date", from).lte("trx_date", to).order("trx_date", { ascending: false });
     if (entity) q = q.eq("business_entity", entity);
+    if (search) q = q.ilike("business_name", `%${search}%`);
     const { data, error } = await q.limit(2000);
     if (error) return toast(error.message, true);
     const rows = data || [];
@@ -1578,6 +1607,9 @@
     $("withholding-f-search").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); loadWithholding(); }
     });
+    ["withholding-f-year", "withholding-f-quarter", "withholding-f-direction"].forEach((id) =>
+      $(id).addEventListener("change", loadWithholding)
+    );
     $("withholding-f-clear").addEventListener("click", () => {
       $("withholding-f-search").value = "";
       $("withholding-f-year").value = "";
@@ -1757,7 +1789,10 @@
             <td>${escapeHtml(m)}</td><td class="num">₱ ${fmtMoney(modes[m].sales)}</td>
             <td class="num">₱ ${fmtMoney(modes[m].exp)}</td><td class="num">₱ ${fmtMoney(net)}</td>
           </tr>`;
-        }).join("")
+        }).join("") + `<tr>
+            <td><strong>TOTAL (all modes — Sales)</strong></td><td class="num"><strong>₱ ${fmtMoney(totalReceived)}</strong></td>
+            <td class="num"><strong>₱ ${fmtMoney(totalExpenses)}</strong></td><td class="num"><strong>₱ ${fmtMoney(netCash)}</strong></td>
+          </tr>`
       : `<tr class="empty-row"><td colspan="4">No transactions in this period</td></tr>`;
 
     // ---- expenses by category ----
@@ -1780,7 +1815,10 @@
       ? lastExpCatRows.map((r) => `<tr>
           <td>${escapeHtml(r.category)}</td><td class="num">${r.count}</td>
           <td class="num">₱ ${fmtMoney(r.total)}</td><td class="num">${r.pct.toFixed(1)}%</td>
-        </tr>`).join("")
+        </tr>`).join("") + `<tr>
+          <td><strong>TOTAL</strong></td><td class="num"><strong>${lastExpCatRows.reduce((a, r) => a + r.count, 0)}</strong></td>
+          <td class="num"><strong>₱ ${fmtMoney(totalExpenses)}</strong></td><td class="num"><strong>100.0%</strong></td>
+        </tr>`
       : `<tr class="empty-row"><td colspan="4">No expenses in this period</td></tr>`;
 
     // ---- staff performance ----
@@ -1803,7 +1841,11 @@
             <td class="num">₱ ${fmtMoney(s.total)}</td><td class="num">₱ ${fmtMoney(s.received)}</td>
             <td class="num">₱ ${fmtMoney(s.balance)}</td>
           </tr>`;
-        }).join("")
+        }).join("") + `<tr>
+            <td><strong>TOTAL</strong></td><td class="num"><strong>${staffNames.reduce((a, n) => a + staff[n].count, 0)}</strong></td>
+            <td class="num"><strong>₱ ${fmtMoney(totalSales)}</strong></td><td class="num"><strong>₱ ${fmtMoney(totalReceived)}</strong></td>
+            <td class="num"><strong>₱ ${fmtMoney(staffNames.reduce((a, n) => a + staff[n].balance, 0))}</strong></td>
+          </tr>`
       : `<tr class="empty-row"><td colspan="5">No sales in this period</td></tr>`;
   }
 

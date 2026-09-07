@@ -314,6 +314,20 @@
     <!-- ======================= RECEIVABLES ======================= -->
     <section id="view-receivables" class="view">
       <p class="section-note">Every sale with a balance still owing, oldest first. Record a payment to chip away at the balance without re-typing the whole sale.</p>
+      <div class="panel">
+        <div class="filters">
+          <div class="field wide"><label>Search</label><input id="receivables-f-search" placeholder="Tradename..." /></div>
+          <div class="field"><label>Entity</label>
+            <select id="receivables-f-entity">
+              <option value="">Combined (all entities)</option>
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship only</option>
+              <option value="CORPORATION">Corporation only</option>
+            </select>
+          </div>
+          <button class="btn small accent" id="receivables-f-apply">Search</button>
+          <button class="btn small ghost" id="receivables-f-clear">Clear</button>
+        </div>
+      </div>
       <div class="card-grid" id="receivables-cards"></div>
       <div class="panel">
         <div class="panel-head"><h2>Outstanding balances</h2></div>
@@ -489,7 +503,7 @@
               <option value="CORPORATION">Corporation</option>
             </select>
           </div>
-          <button class="btn small" id="invoices-f-apply">Filter</button>
+          <button class="btn small accent" id="invoices-f-apply">Search</button>
           <button class="btn small ghost" id="invoices-f-clear">Clear</button>
           <button class="btn small accent" id="invoices-export">Export CSV</button>
         </div>
@@ -510,6 +524,7 @@
         <div class="filters">
           <div class="field"><label>From</label><input type="date" id="expreport-from" /></div>
           <div class="field"><label>To</label><input type="date" id="expreport-to" /></div>
+          <div class="field wide"><label>Search</label><input id="expreport-search" placeholder="Business name..." /></div>
           <div class="field"><label>Entity</label>
             <select id="expreport-entity">
               <option value="">Combined</option>
@@ -517,7 +532,7 @@
               <option value="CORPORATION">Corporation only</option>
             </select>
           </div>
-          <button class="btn small" id="expreport-apply">Run</button>
+          <button class="btn small accent" id="expreport-apply">Search</button>
           <button class="btn small ghost" id="expreport-mtd">This month</button>
           <button class="btn small accent" id="expreport-export">Export CSV</button>
         </div>
@@ -590,7 +605,7 @@
           <div class="field"><label>Direction</label>
             <select id="withholding-f-direction"><option value="">All</option><option value="received">Received</option><option value="issued">Issued</option></select>
           </div>
-          <button class="btn small" id="withholding-f-apply">Filter</button>
+          <button class="btn small accent" id="withholding-f-apply">Search</button>
           <button class="btn small ghost" id="withholding-f-clear">Clear</button>
           <button class="btn small accent" id="withholding-export">Export CSV</button>
         </div>
