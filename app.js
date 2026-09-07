@@ -107,15 +107,15 @@
   }
 
   // ---------------------------------------------------------------- nav
-  const views = ["dashboard", "sales", "expenses", "receivables", "bills", "invoices", "withholding", "rental", "reports"];
+  const views = ["dashboard", "sales", "expenses", "receivables", "bills", "opsreport", "invoices", "withholding", "rental", "reports"];
   const titles = {
     dashboard: "Dashboard", sales: "Daily Sales", expenses: "Daily Expenses", receivables: "Receivables",
-    bills: "Bill Tracker", invoices: "Issued Invoices", withholding: "2307 Register", rental: "Rental Income", reports: "Reports",
+    bills: "Bill Tracker", opsreport: "Daily Operations Report", invoices: "Issued Invoices", withholding: "2307 Register", rental: "Rental Income", reports: "Reports",
   };
   const loaded = {};
   const loaders = {
     dashboard: loadDashboard, sales: loadSales, expenses: loadExpenses, receivables: loadReceivables,
-    bills: loadBills, invoices: loadInvoices, withholding: loadWithholding, rental: loadRental, reports: loadReports,
+    bills: loadBills, opsreport: loadOpsReport, invoices: loadInvoices, withholding: loadWithholding, rental: loadRental, reports: loadReports,
   };
 
   function showView(name) {
@@ -941,6 +941,98 @@
   }
 
   /* =====================================================================
+     DAILY OPERATIONS REPORT (cash/sales summary + staff performance)
+     ===================================================================== */
+  function initOpsReportForm() {
+    $("opsreport-from").value = todayISO();
+    $("opsreport-to").value = todayISO();
+    $("opsreport-apply").addEventListener("click", loadOpsReport);
+    $("opsreport-today").addEventListener("click", () => {
+      $("opsreport-from").value = todayISO();
+      $("opsreport-to").value = todayISO();
+      loadOpsReport();
+    });
+  }
+
+  async function loadOpsReport() {
+    if (!requireDb()) return;
+    if (!$("opsreport-from").value) $("opsreport-from").value = todayISO();
+    if (!$("opsreport-to").value) $("opsreport-to").value = todayISO();
+    const from = $("opsreport-from").value;
+    const to = $("opsreport-to").value;
+
+    const [{ data: sales, error: sErr }, { data: exp, error: eErr }] = await Promise.all([
+      sb.from("sales").select("trx_date,total_amount,amount_received,balance,mode_of_payment,reference_person").gte("trx_date", from).lte("trx_date", to),
+      sb.from("expenses").select("trx_date,amount,mode_of_payment").gte("trx_date", from).lte("trx_date", to),
+    ]);
+    if (sErr) return toast(sErr.message, true);
+    if (eErr) return toast(eErr.message, true);
+
+    const sum = (rows, key) => (rows || []).reduce((a, r) => a + Number(r[key] || 0), 0);
+    const totalSales = sum(sales, "total_amount");
+    const totalReceived = sum(sales, "amount_received");
+    const totalExpenses = sum(exp, "amount");
+    const netCash = totalReceived - totalExpenses;
+
+    function card(label, value, cls) {
+      return `<div class="stat-card"><div class="label">${label}</div><div class="value ${cls}">₱ ${value}</div></div>`;
+    }
+    $("opsreport-cards").innerHTML = [
+      card("Total sales (period)", fmtMoney(totalSales), "good"),
+      card("Amount received (period)", fmtMoney(totalReceived), "good"),
+      card("Total expenses (period)", fmtMoney(totalExpenses), "bad"),
+      card("Net cash", fmtMoney(netCash), netCash >= 0 ? "good" : "bad"),
+    ].join("");
+
+    // ---- breakdown by mode of payment (for closing the register) ----
+    const modes = {};
+    (sales || []).forEach((r) => {
+      const m = r.mode_of_payment || "(not specified)";
+      modes[m] = modes[m] || { sales: 0, exp: 0 };
+      modes[m].sales += Number(r.amount_received || 0);
+    });
+    (exp || []).forEach((r) => {
+      const m = r.mode_of_payment || "(not specified)";
+      modes[m] = modes[m] || { sales: 0, exp: 0 };
+      modes[m].exp += Number(r.amount || 0);
+    });
+    const modeNames = Object.keys(modes).sort((a, b) => a.localeCompare(b));
+    const mtb = $("opsreport-mode-table").querySelector("tbody");
+    mtb.innerHTML = modeNames.length
+      ? modeNames.map((m) => {
+          const net = modes[m].sales - modes[m].exp;
+          return `<tr>
+            <td>${escapeHtml(m)}</td><td class="num">₱ ${fmtMoney(modes[m].sales)}</td>
+            <td class="num">₱ ${fmtMoney(modes[m].exp)}</td><td class="num">₱ ${fmtMoney(net)}</td>
+          </tr>`;
+        }).join("")
+      : `<tr class="empty-row"><td colspan="4">No transactions in this period</td></tr>`;
+
+    // ---- staff performance ----
+    const staff = {};
+    (sales || []).forEach((r) => {
+      const name = r.reference_person || "(unassigned)";
+      staff[name] = staff[name] || { count: 0, total: 0, received: 0, balance: 0 };
+      staff[name].count += 1;
+      staff[name].total += Number(r.total_amount || 0);
+      staff[name].received += Number(r.amount_received || 0);
+      staff[name].balance += Number(r.balance || 0);
+    });
+    const staffNames = Object.keys(staff).sort((a, b) => staff[b].total - staff[a].total);
+    const stb = $("opsreport-staff-table").querySelector("tbody");
+    stb.innerHTML = staffNames.length
+      ? staffNames.map((name) => {
+          const s = staff[name];
+          return `<tr>
+            <td>${escapeHtml(name)}</td><td class="num">${s.count}</td>
+            <td class="num">₱ ${fmtMoney(s.total)}</td><td class="num">₱ ${fmtMoney(s.received)}</td>
+            <td class="num">₱ ${fmtMoney(s.balance)}</td>
+          </tr>`;
+        }).join("")
+      : `<tr class="empty-row"><td colspan="5">No sales in this period</td></tr>`;
+  }
+
+  /* =====================================================================
      REPORTS
      ===================================================================== */
   let lastSummaryRows = [];
@@ -1002,6 +1094,7 @@
   initInvoicesForm();
   initWithholdingForm();
   initRentalForm();
+  initOpsReportForm();
   if (sb) {
     loadDashboard();
     refreshDatalists();

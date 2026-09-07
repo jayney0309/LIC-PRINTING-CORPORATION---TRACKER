@@ -24,6 +24,7 @@
       <button class="nav-btn" data-view="expenses"><span class="ic">&#9755;</span> Daily Expenses</button>
       <button class="nav-btn" data-view="receivables"><span class="ic">&#9755;</span> Receivables</button>
       <button class="nav-btn" data-view="bills"><span class="ic">&#9755;</span> Bill Tracker</button>
+      <button class="nav-btn" data-view="opsreport"><span class="ic">&#9755;</span> Report</button>
 
       <div class="nav-group-label">Tax &amp; compliance (5JS)</div>
       <button class="nav-btn" data-view="invoices"><span class="ic">&#9755;</span> Issued Invoices</button>
@@ -230,6 +231,47 @@
         <div class="table-wrap"><table class="data" id="bills-table">
           <thead><tr>
             <th>Biller</th><th>Due date</th><th class="num">Total</th><th class="num">Paid</th><th>Date paid</th><th>Mode</th><th>Status</th><th>Actions</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ======================= DAILY OPERATIONS REPORT ======================= -->
+    <section id="view-opsreport" class="view">
+      <p class="section-note">Cash/sales summary for closing the register, plus a per-staff breakdown for the period you pick.</p>
+      <div class="panel">
+        <div class="filters">
+          <div class="field"><label>From</label><input type="date" id="opsreport-from" /></div>
+          <div class="field"><label>To</label><input type="date" id="opsreport-to" /></div>
+          <button class="btn small" id="opsreport-apply">Run report</button>
+          <button class="btn small ghost" id="opsreport-today">Today only</button>
+        </div>
+      </div>
+
+      <div class="card-grid" id="opsreport-cards"></div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Cash reconciliation by mode of payment</h2>
+          <span class="hint">Sales collected vs. expenses paid out, per payment mode</span>
+        </div>
+        <div class="table-wrap"><table class="data" id="opsreport-mode-table">
+          <thead><tr>
+            <th>Mode of payment</th><th class="num">Sales received</th><th class="num">Expenses paid</th><th class="num">Net</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Staff performance</h2>
+          <span class="hint">Totals per staff member for the selected period</span>
+        </div>
+        <div class="table-wrap"><table class="data" id="opsreport-staff-table">
+          <thead><tr>
+            <th>Staff</th><th class="num"># Transactions</th><th class="num">Total sales</th><th class="num">Amount received</th><th class="num">Outstanding</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
