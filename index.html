@@ -122,7 +122,7 @@
           <div class="field wide"><label>Tradename / Customer</label><input list="customer-list" id="sales-tradename" required placeholder="e.g. JUAN DELA CRUZ PRINTING" /></div>
           <div class="field"><label>Quote No.</label><input id="sales-quote" placeholder="QU-..." /></div>
           <div class="field"><label>Staff</label><input list="staff-list" id="sales-staff" placeholder="Who handled it" /></div>
-          <div class="field"><label>Total amount</label><input type="number" step="0.01" min="0" id="sales-total" required /></div>
+          <div class="field"><label>Total Amount (Gross Sales)</label><input type="number" step="0.01" min="0" id="sales-total" required /></div>
           <div class="field"><label>Amount received</label><input type="number" step="0.01" min="0" id="sales-received" value="0" /></div>
           <div class="field"><label>Mode of payment</label><input list="payment-modes" id="sales-mode" /></div>
           <div class="field"><label>Xero Invoice No.</label><input id="sales-invoice" placeholder="INV-..." /></div>
@@ -162,7 +162,7 @@
         <div class="table-wrap"><table class="data" id="sales-table">
           <thead><tr>
             <th>Date</th><th>Tradename</th><th>Staff</th><th class="num">Total</th><th class="num">Received</th>
-            <th class="num">Balance</th><th>Status</th><th>Mode</th><th>Xero Invoice</th><th>2307</th><th>Sales Rpt</th><th>Actions</th>
+            <th class="num">Balance</th><th>Status</th><th>Mode</th><th>Xero Invoice</th><th>2307</th><th>Sales Rpt</th><th>Payment</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
@@ -582,6 +582,7 @@
       <div class="panel">
         <div class="panel-head"><h2>2307 register</h2></div>
         <div class="filters">
+          <div class="field wide"><label>Search</label><input id="withholding-f-search" placeholder="Payee name, TIN, or ATC" /></div>
           <div class="field"><label>Year</label><input type="number" id="withholding-f-year" /></div>
           <div class="field"><label>Quarter</label>
             <select id="withholding-f-quarter"><option value="">All</option><option>Q1</option><option>Q2</option><option>Q3</option><option>Q4</option></select>
@@ -697,6 +698,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="config.js" onerror="console.warn('config.js not found — copy config.example.js to config.js')"></script>
 <script src="app.js"></script>
 </body>

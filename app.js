@@ -413,6 +413,7 @@
         { label: "Status", key: "status" }, { label: "Mode", key: "mode_of_payment" },
         { label: "Xero Invoice No", key: "invoice_no" }, { label: "Business Entity", key: "business_entity" },
         { label: "TIN", key: "tin" }, { label: "ATC", key: "atc" }, { label: "Tax Withheld", key: "tax_withheld" },
+        { label: "Payment Confirmed", get: (r) => (r.payment_confirmed ? "Yes" : "No") },
         { label: "Remarks", key: "remarks" },
       ]);
     });
@@ -446,6 +447,7 @@
         income_payment: payload.total_amount,
         tax_withheld: taxWithheld,
         invoice_ref: payload.invoice_no,
+        business_entity: payload.business_entity || null,
       };
       const { error } = await sb.from("withholding_2307").upsert(whPayload, { onConflict: "sale_id" });
       if (error) toast("Sale saved, but the linked 2307 failed: " + error.message, true);
@@ -528,18 +530,33 @@
           <td>${escapeHtml(r.mode_of_payment || "")}</td><td>${escapeHtml(r.invoice_no || "")}</td>
           <td>${has2307.has(r.id) ? '<span class="badge good">2307</span>' : ""}</td>
           <td>${hasInvoice.has(r.id) ? '<span class="badge good">Filed</span>' : ""}</td>
+          <td>
+            ${r.payment_confirmed ? '<span class="badge good">Confirmed</span>' : '<span class="badge warn">Pending</span>'}
+            ${currentRole === "admin" ? `<button class="btn small ghost" data-toggle-payment="${r.id}" data-confirmed="${r.payment_confirmed ? "1" : "0"}">${r.payment_confirmed ? "Unconfirm" : "Confirm"}</button>` : ""}
+          </td>
           <td class="row-actions">
             <button class="btn small" data-edit-sale="${r.id}">Edit</button>
             <button class="btn small danger" data-del-sale="${r.id}">Del</button>
           </td>
         </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="12">No sales match these filters</td></tr>`;
+      : `<tr class="empty-row"><td colspan="13">No sales match these filters</td></tr>`;
 
     tb.querySelectorAll("[data-edit-sale]").forEach((btn) =>
       btn.addEventListener("click", () => editSale(rows.find((r) => String(r.id) === btn.dataset.editSale)))
     );
     tb.querySelectorAll("[data-del-sale]").forEach((btn) =>
       btn.addEventListener("click", () => deleteRow("sales", btn.dataset.delSale, loadSales))
+    );
+    tb.querySelectorAll("[data-toggle-payment]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        if (!requireDb()) return;
+        const id = btn.dataset.togglePayment;
+        const next = btn.dataset.confirmed !== "1";
+        const { error } = await sb.from("sales").update({ payment_confirmed: next }).eq("id", id);
+        if (error) return toast(error.message, true);
+        toast(next ? "Payment confirmed" : "Payment confirmation removed");
+        loadSales();
+      })
     );
   }
   function editSale(r) {
@@ -648,6 +665,136 @@
     return `Q${Math.floor((m - 1) / 3) + 1}`;
   }
 
+  // ---------------------------------------------------------------------
+  // Generate a printable/signable Certificate of Creditable Tax Withheld
+  // at Source (BIR Form 2307), one PDF per certificate, so it can be
+  // downloaded, signed, and sent straight to the vendor/lessor. Works from
+  // whatever data is already on hand (an expense row, or a 2307 register
+  // row) -- no extra lookups needed.
+  // ---------------------------------------------------------------------
+  function download2307Pdf({ entity, payeeName, tin, atc, incomePayment, taxWithheld, periodDate, invoiceRef }) {
+    if (!window.jspdf || !window.jspdf.jsPDF) {
+      toast("PDF library didn't load — check your internet connection and try again.", true);
+      return;
+    }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+    const pageW = 210;
+    const marginX = 18;
+    let y = 20;
+
+    const payorName = fullEntityLabel(entity || "SOLE PROPRIETORSHIP");
+    const d = periodDate ? new Date(periodDate) : new Date();
+    const year = d.getFullYear();
+    const monthStr = `${year}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const quarter = quarterOf(monthStr);
+    const monthLabel = d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.text("CERTIFICATE OF CREDITABLE TAX WITHHELD AT SOURCE", pageW / 2, y, { align: "center" });
+    y += 6;
+    doc.setFontSize(11);
+    doc.text("(BIR FORM 2307)", pageW / 2, y, { align: "center" });
+    y += 8;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(`For the period ended: ${monthLabel}  (${quarter} ${year})`, pageW / 2, y, { align: "center" });
+    y += 12;
+
+    function section(title) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text(title, marginX, y);
+      y += 1.5;
+      doc.setDrawColor(180);
+      doc.line(marginX, y, pageW - marginX, y);
+      y += 6;
+      doc.setFont("helvetica", "normal");
+    }
+    function line(label, value) {
+      doc.setFont("helvetica", "bold");
+      doc.text(label, marginX, y);
+      doc.setFont("helvetica", "normal");
+      doc.text(String(value || ""), marginX + 45, y);
+      doc.setDrawColor(150);
+      doc.line(marginX + 45, y + 1, pageW - marginX, y + 1);
+      y += 8;
+    }
+
+    section("PART I — PAYOR / WITHHOLDING AGENT");
+    line("Name:", payorName);
+    line("TIN:", "");
+    line("Registered Address:", "");
+    y += 2;
+
+    section("PART II — PAYEE (INCOME RECIPIENT)");
+    line("Name:", payeeName);
+    line("TIN:", tin || "");
+    line("Registered Address:", "");
+    y += 4;
+
+    // Withholding table
+    doc.setDrawColor(0);
+    const colX = [marginX, marginX + 30, marginX + 105, marginX + 145];
+    const tableRight = pageW - marginX;
+    const rowH = 9;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.rect(marginX, y, tableRight - marginX, rowH);
+    doc.text("ATC", colX[0] + 2, y + 6);
+    doc.text("Nature of Income Payment", colX[1] + 2, y + 6);
+    doc.text("Income Payment", colX[2] + 2, y + 6);
+    doc.text("Tax Withheld", colX[3] + 2, y + 6);
+    [colX[1], colX[2], colX[3]].forEach((x) => doc.line(x, y, x, y + rowH));
+    y += rowH;
+
+    doc.setFont("helvetica", "normal");
+    doc.rect(marginX, y, tableRight - marginX, rowH);
+    doc.text(String(atc || ""), colX[0] + 2, y + 6);
+    doc.text(invoiceRef ? `Ref: ${invoiceRef}` : "", colX[1] + 2, y + 6);
+    doc.text(`Php ${fmtMoney(incomePayment)}`, colX[2] + 2, y + 6);
+    doc.text(`Php ${fmtMoney(taxWithheld)}`, colX[3] + 2, y + 6);
+    [colX[1], colX[2], colX[3]].forEach((x) => doc.line(x, y, x, y + rowH));
+    y += rowH;
+
+    doc.setFont("helvetica", "bold");
+    doc.rect(marginX, y, tableRight - marginX, rowH);
+    doc.text("TOTAL", colX[1] + 2, y + 6);
+    doc.text(`Php ${fmtMoney(incomePayment)}`, colX[2] + 2, y + 6);
+    doc.text(`Php ${fmtMoney(taxWithheld)}`, colX[3] + 2, y + 6);
+    [colX[1], colX[2], colX[3]].forEach((x) => doc.line(x, y, x, y + rowH));
+    y += rowH + 10;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    const declaration = "I declare, under the penalties of perjury, that this certificate has been made in good faith, verified by me, and to the best of my knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof.";
+    const wrapped = doc.splitTextToSize(declaration, tableRight - marginX);
+    doc.text(wrapped, marginX, y);
+    y += wrapped.length * 4 + 14;
+
+    const sigColW = (tableRight - marginX - 10) / 2;
+    doc.line(marginX, y, marginX + sigColW, y);
+    doc.line(marginX + sigColW + 10, y, tableRight, y);
+    y += 5;
+    doc.setFontSize(9);
+    doc.text("Signature over Printed Name (Payor)", marginX, y);
+    doc.text("Signature over Printed Name (Payee)", marginX + sigColW + 10, y);
+    y += 10;
+    doc.line(marginX, y, marginX + sigColW, y);
+    doc.line(marginX + sigColW + 10, y, tableRight, y);
+    y += 5;
+    doc.text("Date", marginX, y);
+    doc.text("Date", marginX + sigColW + 10, y);
+
+    doc.setFontSize(7.5);
+    doc.setTextColor(140);
+    doc.text("Generated from " + payorName + "'s Bookkeeping & Tax System — please review all details before signing and filing.", marginX, 287);
+
+    const safeName = (payeeName || "payee").replace(/[^a-z0-9]+/gi, "_").slice(0, 40);
+    doc.save(`2307_${safeName}_${monthStr}.pdf`);
+  }
+
   // An expense with tax actually withheld means WE owe the vendor a 2307
   // (we're the withholding agent) — keep one withholding_2307 row (direction
   // 'issued') in sync with each expense row instead of asking for the same
@@ -668,6 +815,7 @@
         income_payment: payload.amount,
         tax_withheld: taxWithheld,
         invoice_ref: payload.invoice_no,
+        business_entity: payload.business_entity || null,
       };
       const { error } = await sb.from("withholding_2307").upsert(whPayload, { onConflict: "expense_id" });
       if (error) toast("Expense saved, but the linked 2307 failed: " + error.message, true);
@@ -1419,7 +1567,11 @@
     });
     $("withholding-cancel-edit").addEventListener("click", resetWithholdingForm);
     $("withholding-f-apply").addEventListener("click", loadWithholding);
+    $("withholding-f-search").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); loadWithholding(); }
+    });
     $("withholding-f-clear").addEventListener("click", () => {
+      $("withholding-f-search").value = "";
       $("withholding-f-year").value = "";
       $("withholding-f-quarter").value = "";
       $("withholding-f-direction").value = "";
@@ -1446,9 +1598,11 @@
   async function fetchWithholdingRows() {
     let q = sb.from("withholding_2307").select("*").order("year", { ascending: false }).order("quarter", { ascending: false });
     const year = $("withholding-f-year").value, qtr = $("withholding-f-quarter").value, direction = $("withholding-f-direction").value;
+    const search = $("withholding-f-search").value.trim().replace(/[,()]/g, "");
     if (year) q = q.eq("year", Number(year));
     if (qtr) q = q.eq("quarter", qtr);
     if (direction) q = q.eq("direction", direction);
+    if (search) q = q.or(`payee_name.ilike.%${search}%,tin.ilike.%${search}%,atc.ilike.%${search}%`);
     const { data, error } = await q.limit(1000);
     if (error) { toast(error.message, true); return []; }
     return data || [];
@@ -1468,6 +1622,7 @@
           <td class="num">₱ ${fmtMoney(r.income_payment)}</td><td class="num">₱ ${fmtMoney(r.tax_withheld)}</td>
           <td>${r.issued ? statusBadge("FULLY PAID") : statusBadge("N/A")}</td>
           <td class="row-actions">
+            ${r.direction === "issued" ? `<button class="btn small accent" data-pdf-wh="${r.id}">Download 2307</button>` : ""}
             <button class="btn small" data-edit-wh="${r.id}">Edit</button>
             <button class="btn small danger" data-del-wh="${r.id}">Del</button>
           </td>
@@ -1478,6 +1633,22 @@
     );
     tb.querySelectorAll("[data-del-wh]").forEach((btn) =>
       btn.addEventListener("click", () => deleteRow("withholding_2307", btn.dataset.delWh, loadWithholding))
+    );
+    tb.querySelectorAll("[data-pdf-wh]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const r = rows.find((row) => String(row.id) === btn.dataset.pdfWh);
+        if (!r) return;
+        download2307Pdf({
+          entity: r.business_entity,
+          payeeName: r.payee_name,
+          tin: r.tin,
+          atc: r.atc,
+          incomePayment: r.income_payment,
+          taxWithheld: r.tax_withheld,
+          periodDate: r.month || (r.year ? `${r.year}-01-01` : null),
+          invoiceRef: r.invoice_ref,
+        });
+      })
     );
   }
   function editWithholding(r) {
