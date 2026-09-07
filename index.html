@@ -25,6 +25,7 @@
       <button class="nav-btn" data-view="receivables"><span class="ic">&#9755;</span> Receivables</button>
       <button class="nav-btn" data-view="bills"><span class="ic">&#9755;</span> Bill Tracker</button>
       <button class="nav-btn" data-view="opsreport"><span class="ic">&#9755;</span> Report</button>
+      <button class="nav-btn" data-view="staff"><span class="ic">&#9755;</span> Staff</button>
 
       <div class="nav-group-label">Tax &amp; compliance (5JS)</div>
       <button class="nav-btn" data-view="invoices"><span class="ic">&#9755;</span> Issued Invoices</button>
@@ -340,6 +341,31 @@
         <div class="table-wrap"><table class="data" id="opsreport-staff-table">
           <thead><tr>
             <th>Staff</th><th class="num"># Transactions</th><th class="num">Total sales</th><th class="num">Amount received</th><th class="num">Outstanding</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ======================= STAFF ======================= -->
+    <section id="view-staff" class="view">
+      <p class="section-note">Manage who shows up in the Staff dropdown when logging a sale. Deactivating keeps all of that person's past sales and report totals intact — only delete a row if you're sure you don't need it anymore.</p>
+      <div class="panel">
+        <div class="panel-head"><h2>Add staff</h2></div>
+        <form id="staff-form" class="form-grid">
+          <div class="field wide"><label>Name</label><input id="staff-name" required placeholder="e.g. JUAN DELA CRUZ" /></div>
+          <div class="form-actions wide">
+            <button type="submit" class="btn primary">Add staff</button>
+            <span class="hint" id="staff-form-msg"></span>
+          </div>
+        </form>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Staff list</h2></div>
+        <div class="table-wrap"><table class="data" id="staff-table">
+          <thead><tr>
+            <th>Name</th><th>Status</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>

@@ -107,15 +107,15 @@
   }
 
   // ---------------------------------------------------------------- nav
-  const views = ["dashboard", "sales", "expenses", "receivables", "bills", "opsreport", "invoices", "withholding", "rental", "reports"];
+  const views = ["dashboard", "sales", "expenses", "receivables", "bills", "opsreport", "staff", "invoices", "withholding", "rental", "reports"];
   const titles = {
     dashboard: "Dashboard", sales: "Daily Sales", expenses: "Daily Expenses", receivables: "Receivables",
-    bills: "Bill Tracker", opsreport: "Daily Operations Report", invoices: "Issued Invoices", withholding: "2307 Register", rental: "Rental Income", reports: "Reports",
+    bills: "Bill Tracker", opsreport: "Daily Operations Report", staff: "Staff", invoices: "Issued Invoices", withholding: "2307 Register", rental: "Rental Income", reports: "Reports",
   };
   const loaded = {};
   const loaders = {
     dashboard: loadDashboard, sales: loadSales, expenses: loadExpenses, receivables: loadReceivables,
-    bills: loadBills, opsreport: loadOpsReport, invoices: loadInvoices, withholding: loadWithholding, rental: loadRental, reports: loadReports,
+    bills: loadBills, opsreport: loadOpsReport, staff: loadStaff, invoices: loadInvoices, withholding: loadWithholding, rental: loadRental, reports: loadReports,
   };
 
   function showView(name) {
@@ -1313,6 +1313,55 @@
   }
 
   /* =====================================================================
+     STAFF (manage who shows up in the Staff dropdown)
+     ===================================================================== */
+  function initStaffForm() {
+    $("staff-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!requireDb()) return;
+      const name = $("staff-name").value.trim();
+      if (!name) return;
+      const { error } = await sb.from("staff").insert({ name });
+      if (error) return toast(error.message, true);
+      toast("Staff added");
+      $("staff-form").reset();
+      loadStaff();
+      refreshDatalists();
+    });
+  }
+  async function loadStaff() {
+    if (!requireDb()) return;
+    const { data: rows, error } = await sb.from("staff").select("*").order("name");
+    if (error) return toast(error.message, true);
+    const tb = $("staff-table").querySelector("tbody");
+    tb.innerHTML = (rows || []).length
+      ? rows.map((r) => `<tr>
+          <td>${escapeHtml(r.name)}</td>
+          <td><span class="badge ${r.active ? "good" : "neutral"}">${r.active ? "ACTIVE" : "INACTIVE"}</span></td>
+          <td class="row-actions">
+            <button class="btn small" data-toggle-staff="${r.id}" data-active="${r.active}">${r.active ? "Deactivate" : "Reactivate"}</button>
+            <button class="btn small danger" data-del-staff="${r.id}">Delete</button>
+          </td>
+        </tr>`).join("")
+      : `<tr class="empty-row"><td colspan="3">No staff added yet</td></tr>`;
+    tb.querySelectorAll("[data-toggle-staff]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        if (!requireDb()) return;
+        const id = btn.dataset.toggleStaff;
+        const nowActive = btn.dataset.active !== "true";
+        const { error } = await sb.from("staff").update({ active: nowActive }).eq("id", id);
+        if (error) return toast(error.message, true);
+        toast(nowActive ? "Staff reactivated" : "Staff deactivated");
+        loadStaff();
+        refreshDatalists();
+      })
+    );
+    tb.querySelectorAll("[data-del-staff]").forEach((btn) =>
+      btn.addEventListener("click", () => deleteRow("staff", btn.dataset.delStaff, () => { loadStaff(); refreshDatalists(); }))
+    );
+  }
+
+  /* =====================================================================
      REPORTS
      ===================================================================== */
   let lastSummaryRows = [];
@@ -1376,6 +1425,7 @@
   initWithholdingForm();
   initRentalForm();
   initOpsReportForm();
+  initStaffForm();
   if (sb) {
     loadDashboard();
     refreshDatalists();
