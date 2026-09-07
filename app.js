@@ -110,8 +110,24 @@
   // ---------------------------------------------------------------- auth gate
   let bootedAfterAuth = false;
 
-  const ADMIN_ONLY_VIEWS = ["invoices", "withholding", "reports", "incomestatement"];
+  const ADMIN_ONLY_VIEWS = ["invoices", "expensesreport", "withholding", "reports", "incomestatement"];
   let currentRole = "staff";
+
+  // Daily Sales and Daily Expenses each have two locked-entity nav entries
+  // (Sole Prop / Corp) instead of a dropdown on the form, so staff can't
+  // accidentally file one entity's transaction under the other.
+  let currentSalesEntity = "SOLE PROPRIETORSHIP";
+  let currentExpensesEntity = "SOLE PROPRIETORSHIP";
+  const NAV_ENTITY = {
+    "sales-sp": { kind: "sales", entity: "SOLE PROPRIETORSHIP" },
+    "sales-corp": { kind: "sales", entity: "CORPORATION" },
+    "expenses-sp": { kind: "expenses", entity: "SOLE PROPRIETORSHIP" },
+    "expenses-corp": { kind: "expenses", entity: "CORPORATION" },
+  };
+  const VIEW_SECTION = { "sales-sp": "sales", "sales-corp": "sales", "expenses-sp": "expenses", "expenses-corp": "expenses" };
+  function fullEntityLabel(v) {
+    return v === "CORPORATION" ? "LIC Printing Corporation" : "LIC Printing Shop (Sole Proprietorship)";
+  }
 
   function showAppShell(session) {
     $("login-screen").style.display = "none";
@@ -177,15 +193,21 @@
   }
 
   // ---------------------------------------------------------------- nav
-  const views = ["dashboard", "sales", "expenses", "receivables", "bills", "opsreport", "staff", "invoices", "withholding", "reports", "incomestatement"];
+  const views = ["dashboard", "sales", "expenses", "receivables", "bills", "opsreport", "staff", "invoices", "expensesreport", "withholding", "reports", "incomestatement"];
   const titles = {
-    dashboard: "Dashboard", sales: "Daily Sales", expenses: "Daily Expenses", receivables: "Receivables",
-    bills: "Bill Tracker", opsreport: "Daily Operations Report", staff: "Staff", invoices: "Sales Report", withholding: "2307 Register", reports: "Reports", incomestatement: "Income Statement",
+    dashboard: "Dashboard",
+    "sales-sp": "Daily Sales — LIC Printing Shop", "sales-corp": "Daily Sales — LIC Printing Corporation",
+    "expenses-sp": "Daily Expenses — LIC Printing Shop", "expenses-corp": "Daily Expenses — LIC Printing Corporation",
+    receivables: "Receivables", bills: "Bill Tracker", opsreport: "Daily Operations Report", staff: "Staff",
+    invoices: "Sales Report", expensesreport: "Expenses Report", withholding: "2307 Register", reports: "Reports", incomestatement: "Income Statement",
   };
   const loaded = {};
   const loaders = {
-    dashboard: loadDashboard, sales: loadSales, expenses: loadExpenses, receivables: loadReceivables,
-    bills: loadBills, opsreport: loadOpsReport, staff: loadStaff, invoices: loadInvoices, withholding: loadWithholding, reports: loadReports, incomestatement: loadIncomeStatement,
+    dashboard: loadDashboard,
+    "sales-sp": loadSales, "sales-corp": loadSales,
+    "expenses-sp": loadExpenses, "expenses-corp": loadExpenses,
+    receivables: loadReceivables, bills: loadBills, opsreport: loadOpsReport, staff: loadStaff,
+    invoices: loadInvoices, expensesreport: loadExpensesReport, withholding: loadWithholding, reports: loadReports, incomestatement: loadIncomeStatement,
   };
 
   function showView(name) {
@@ -193,11 +215,24 @@
       toast("That section is restricted to administrator accounts.", true);
       name = "dashboard";
     }
+    const nav = NAV_ENTITY[name];
+    if (nav) {
+      if (nav.kind === "sales") {
+        currentSalesEntity = nav.entity;
+        $("sales-entity").value = currentSalesEntity;
+        $("sales-entity-label").textContent = fullEntityLabel(currentSalesEntity);
+      } else {
+        currentExpensesEntity = nav.entity;
+        $("expenses-entity").value = currentExpensesEntity;
+        $("expenses-entity-label").textContent = fullEntityLabel(currentExpensesEntity);
+      }
+    }
+    const sectionId = VIEW_SECTION[name] || name;
     views.forEach((v) => {
-      $("view-" + v).classList.toggle("active", v === name);
+      $("view-" + v).classList.toggle("active", v === sectionId);
     });
     document.querySelectorAll(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
-    $("view-title").textContent = titles[name];
+    $("view-title").textContent = titles[name] || titles[sectionId];
     if (sb && loaders[name]) loaders[name]();
   }
   document.querySelectorAll(".nav-btn").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
@@ -317,6 +352,7 @@
      ===================================================================== */
   function initSalesForm() {
     $("sales-date").value = todayISO();
+    $("sales-entity").value = currentSalesEntity;
     $("sales-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!requireDb()) return;
@@ -365,13 +401,12 @@
     $("sales-f-clear").addEventListener("click", () => {
       ["sales-f-from", "sales-f-to", "sales-f-search"].forEach((id) => ($(id).value = ""));
       $("sales-f-status").value = "";
-      $("sales-f-entity").value = "";
       loadSales();
     });
     $("sales-export").addEventListener("click", async () => {
       if (!requireDb()) return;
       const rows = await fetchSalesRows();
-      downloadCSV("sales.csv", rows, [
+      downloadCSV(currentSalesEntity === "CORPORATION" ? "sales_corporation.csv" : "sales_sole_prop.csv", rows, [
         { label: "Date", key: "trx_date" }, { label: "Tradename", key: "tradename" },
         { label: "Staff", key: "reference_person" }, { label: "Total", key: "total_amount" },
         { label: "Received", key: "amount_received" }, { label: "Balance", key: "balance" },
@@ -385,6 +420,7 @@
   function resetSalesForm() {
     $("sales-form").reset();
     $("sales-id").value = "";
+    $("sales-entity").value = currentSalesEntity;
     $("sales-date").value = todayISO();
     $("sales-received").value = "0";
     $("sales-form-title").textContent = "Log a sale";
@@ -459,14 +495,12 @@
     }
   }
   async function fetchSalesRows() {
-    let q = sb.from("v_sales_status").select("*").order("trx_date", { ascending: false });
+    let q = sb.from("v_sales_status").select("*").eq("business_entity", currentSalesEntity).order("trx_date", { ascending: false });
     const from = $("sales-f-from").value, to = $("sales-f-to").value, status = $("sales-f-status").value, search = $("sales-f-search").value.trim();
-    const entity = $("sales-f-entity").value;
     if (from) q = q.gte("trx_date", from);
     if (to) q = q.lte("trx_date", to);
     if (status) q = q.eq("status", status);
     if (search) q = q.ilike("tradename", `%${search}%`);
-    if (entity) q = q.eq("business_entity", entity);
     const { data, error } = await q.limit(1000);
     if (error) { toast(error.message, true); return []; }
     return data || [];
@@ -492,7 +526,6 @@
           <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.amount_received)}</td>
           <td class="num">₱ ${fmtMoney(r.balance)}</td><td>${statusBadge(r.status)}</td>
           <td>${escapeHtml(r.mode_of_payment || "")}</td><td>${escapeHtml(r.invoice_no || "")}</td>
-          <td>${escapeHtml(entityLabel(r.business_entity))}</td>
           <td>${has2307.has(r.id) ? '<span class="badge good">2307</span>' : ""}</td>
           <td>${hasInvoice.has(r.id) ? '<span class="badge good">Filed</span>' : ""}</td>
           <td class="row-actions">
@@ -500,7 +533,7 @@
             <button class="btn small danger" data-del-sale="${r.id}">Del</button>
           </td>
         </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="13">No sales match these filters</td></tr>`;
+      : `<tr class="empty-row"><td colspan="12">No sales match these filters</td></tr>`;
 
     tb.querySelectorAll("[data-edit-sale]").forEach((btn) =>
       btn.addEventListener("click", () => editSale(rows.find((r) => String(r.id) === btn.dataset.editSale)))
@@ -546,6 +579,7 @@
      ===================================================================== */
   function initExpensesForm() {
     $("expenses-date").value = todayISO();
+    $("expenses-entity").value = currentExpensesEntity;
     $("expenses-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!requireDb()) return;
@@ -553,6 +587,7 @@
       const payload = {
         trx_date: $("expenses-date").value,
         business_scope: $("expenses-scope").value,
+        business_entity: $("expenses-entity").value || null,
         tax_type: $("expenses-taxtype").value,
         tin: $("expenses-tin").value.trim() || null,
         business_name: $("expenses-business").value.trim(),
@@ -589,7 +624,7 @@
     $("expenses-export").addEventListener("click", async () => {
       if (!requireDb()) return;
       const rows = await fetchExpensesRows();
-      downloadCSV("expenses.csv", rows, [
+      downloadCSV(currentExpensesEntity === "CORPORATION" ? "expenses_corporation.csv" : "expenses_sole_prop.csv", rows, [
         { label: "Date", key: "trx_date" }, { label: "Business", key: "business_name" },
         { label: "Category", key: "category" }, { label: "Tax Type", key: "tax_type" },
         { label: "Amount", key: "amount" }, { label: "Mode", key: "mode_of_payment" },
@@ -601,6 +636,7 @@
   function resetExpensesForm() {
     $("expenses-form").reset();
     $("expenses-id").value = "";
+    $("expenses-entity").value = currentExpensesEntity;
     $("expenses-date").value = todayISO();
     $("expenses-form-title").textContent = "Log an expense";
     $("expenses-cancel-edit").style.display = "none";
@@ -641,7 +677,7 @@
     }
   }
   async function fetchExpensesRows() {
-    let q = sb.from("expenses").select("*").order("trx_date", { ascending: false });
+    let q = sb.from("expenses").select("*").eq("business_entity", currentExpensesEntity).order("trx_date", { ascending: false });
     const from = $("expenses-f-from").value, to = $("expenses-f-to").value, cat = $("expenses-f-category").value.trim(), search = $("expenses-f-search").value.trim();
     if (from) q = q.gte("trx_date", from);
     if (to) q = q.lte("trx_date", to);
@@ -689,6 +725,7 @@
     $("expenses-category").value = r.category || "";
     $("expenses-mode").value = r.mode_of_payment || "";
     $("expenses-invoice").value = r.invoice_no || "";
+    $("expenses-entity").value = r.business_entity || "";
     $("expenses-atc").value = r.atc || "";
     $("expenses-taxwithheld").value = r.tax_withheld ?? "";
     $("expenses-particulars").value = r.particulars || "";
@@ -1273,6 +1310,84 @@
   }
 
   /* =====================================================================
+     EXPENSES REPORT (Tax & Compliance) — all logged expenses, both entities
+     ===================================================================== */
+  let lastExpReportRows = [];
+  function initExpensesReportForm() {
+    const y = new Date().getFullYear(), m = String(new Date().getMonth() + 1).padStart(2, "0");
+    $("expreport-from").value = `${y}-${m}-01`;
+    $("expreport-to").value = todayISO();
+    $("expreport-apply").addEventListener("click", loadExpensesReport);
+    $("expreport-entity").addEventListener("change", loadExpensesReport);
+    $("expreport-mtd").addEventListener("click", () => {
+      const yy = new Date().getFullYear(), mm = String(new Date().getMonth() + 1).padStart(2, "0");
+      $("expreport-from").value = `${yy}-${mm}-01`;
+      $("expreport-to").value = todayISO();
+      loadExpensesReport();
+    });
+    $("expreport-export").addEventListener("click", () => {
+      if (!lastExpReportRows.length) return toast("Nothing to export yet — run the report first", true);
+      downloadCSV("expenses_report.csv", lastExpReportRows, [
+        { label: "Date", key: "trx_date" }, { label: "Business", key: "business_name" },
+        { label: "Category", key: "category" }, { label: "Tax Type", key: "tax_type" },
+        { label: "Business Entity", key: "business_entity" }, { label: "Amount", key: "amount" },
+        { label: "Mode", key: "mode_of_payment" }, { label: "ATC", key: "atc" }, { label: "Tax Withheld", key: "tax_withheld" },
+      ]);
+    });
+  }
+  async function loadExpensesReport() {
+    if (!requireDb()) return;
+    if (!$("expreport-from").value) $("expreport-from").value = todayISO();
+    if (!$("expreport-to").value) $("expreport-to").value = todayISO();
+    const from = $("expreport-from").value;
+    const to = $("expreport-to").value;
+    const entity = $("expreport-entity").value;
+
+    let q = sb.from("expenses").select("*").gte("trx_date", from).lte("trx_date", to).order("trx_date", { ascending: false });
+    if (entity) q = q.eq("business_entity", entity);
+    const { data, error } = await q.limit(2000);
+    if (error) return toast(error.message, true);
+    const rows = data || [];
+    lastExpReportRows = rows;
+
+    const total = rows.reduce((a, r) => a + Number(r.amount || 0), 0);
+    const vatTotal = rows.filter((r) => r.tax_type === "VAT").reduce((a, r) => a + Number(r.amount || 0), 0);
+    const nonVatTotal = total - vatTotal;
+
+    function card(label, value, cls) {
+      return `<div class="stat-card"><div class="label">${label}</div><div class="value ${cls}">₱ ${value}</div></div>`;
+    }
+    $("expreport-cards").innerHTML = [
+      card("Total expenses", fmtMoney(total), "bad"),
+      card("VAT-tagged", fmtMoney(vatTotal), "warn"),
+      card("Non-VAT / other", fmtMoney(nonVatTotal), "neutral"),
+    ].join("");
+
+    const cats = {};
+    rows.forEach((r) => {
+      const c = r.category || "(uncategorized)";
+      if (!cats[c]) cats[c] = { count: 0, total: 0 };
+      cats[c].count += 1;
+      cats[c].total += Number(r.amount || 0);
+    });
+    const catNames = Object.keys(cats).sort((a, b) => cats[b].total - cats[a].total);
+    const catBody = $("expreport-category-table").querySelector("tbody");
+    catBody.innerHTML = catNames.length
+      ? catNames.map((c) => `<tr><td>${escapeHtml(c)}</td><td class="num">${cats[c].count}</td><td class="num">₱ ${fmtMoney(cats[c].total)}</td></tr>`).join("")
+      : `<tr class="empty-row"><td colspan="3">No expenses in this period</td></tr>`;
+
+    const tb = $("expreport-table").querySelector("tbody");
+    tb.innerHTML = rows.length
+      ? rows.map((r) => `<tr>
+          <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.business_name)}</td><td>${escapeHtml(r.category || "")}</td>
+          <td>${escapeHtml(r.tax_type || "")}</td><td>${escapeHtml(entityLabel(r.business_entity))}</td>
+          <td class="num">₱ ${fmtMoney(r.amount)}</td><td>${escapeHtml(r.mode_of_payment || "")}</td>
+          <td>${escapeHtml(r.atc || "")}</td><td class="num">${r.tax_withheld ? "₱ " + fmtMoney(r.tax_withheld) : ""}</td>
+        </tr>`).join("")
+      : `<tr class="empty-row"><td colspan="9">No expenses match these filters</td></tr>`;
+  }
+
+  /* =====================================================================
      2307 WITHHOLDING REGISTER
      ===================================================================== */
   function initWithholdingForm() {
@@ -1416,10 +1531,12 @@
 
     let salesQuery = sb.from("sales").select("trx_date,total_amount,amount_received,balance,mode_of_payment,reference_person,business_entity").gte("trx_date", from).lte("trx_date", to);
     if (entity) salesQuery = salesQuery.eq("business_entity", entity);
+    let expQuery = sb.from("expenses").select("trx_date,amount,mode_of_payment,category,business_name,business_entity").gte("trx_date", from).lte("trx_date", to);
+    if (entity) expQuery = expQuery.eq("business_entity", entity);
 
     const [{ data: sales, error: sErr }, { data: exp, error: eErr }] = await Promise.all([
       salesQuery,
-      sb.from("expenses").select("trx_date,amount,mode_of_payment,category,business_name").gte("trx_date", from).lte("trx_date", to),
+      expQuery,
     ]);
     if (sErr) return toast(sErr.message, true);
     if (eErr) return toast(eErr.message, true);
@@ -1595,9 +1712,11 @@
 
     let invQuery = sb.from("issued_invoices").select("gross_sales,net_sales,vat,cancelled,month_declared,business_entity").gte("month_declared", from).lte("month_declared", to);
     if (entity) invQuery = invQuery.eq("business_entity", entity);
+    let expQuery = sb.from("expenses").select("amount,category,business_entity").gte("trx_date", from).lte("trx_date", to);
+    if (entity) expQuery = expQuery.eq("business_entity", entity);
     const [{ data: inv, error: iErr }, { data: exp, error: eErr }] = await Promise.all([
       invQuery,
-      sb.from("expenses").select("amount,category").gte("trx_date", from).lte("trx_date", to),
+      expQuery,
     ]);
     if (iErr) return toast(iErr.message, true);
     if (eErr) return toast(eErr.message, true);
@@ -1705,6 +1824,7 @@
   initExpensesDedupe();
   initBillsForm();
   initInvoicesForm();
+  initExpensesReportForm();
   initWithholdingForm();
   initOpsReportForm();
   initStaffForm();

@@ -38,8 +38,10 @@
       <button class="nav-btn active" data-view="dashboard"><span class="ic">&#9673;</span> Dashboard</button>
 
       <div class="nav-group-label">Daily operations</div>
-      <button class="nav-btn" data-view="sales"><span class="ic">&#9755;</span> Daily Sales</button>
-      <button class="nav-btn" data-view="expenses"><span class="ic">&#9755;</span> Daily Expenses</button>
+      <button class="nav-btn" data-view="sales-sp"><span class="ic">&#9755;</span> Sales — Sole Prop</button>
+      <button class="nav-btn" data-view="sales-corp"><span class="ic">&#9755;</span> Sales — Corp</button>
+      <button class="nav-btn" data-view="expenses-sp"><span class="ic">&#9755;</span> Expenses — Sole Prop</button>
+      <button class="nav-btn" data-view="expenses-corp"><span class="ic">&#9755;</span> Expenses — Corp</button>
       <button class="nav-btn" data-view="receivables"><span class="ic">&#9755;</span> Receivables</button>
       <button class="nav-btn" data-view="bills"><span class="ic">&#9755;</span> Bill Tracker</button>
       <button class="nav-btn" data-view="opsreport"><span class="ic">&#9755;</span> Report</button>
@@ -48,6 +50,7 @@
       <div id="nav-admin-group">
         <div class="nav-group-label">Tax &amp; compliance (5JS)</div>
         <button class="nav-btn" data-view="invoices"><span class="ic">&#9755;</span> Sales Report</button>
+        <button class="nav-btn" data-view="expensesreport"><span class="ic">&#9755;</span> Expenses Report</button>
         <button class="nav-btn" data-view="withholding"><span class="ic">&#9755;</span> 2307 Register</button>
         <button class="nav-btn" data-view="reports"><span class="ic">&#9755;</span> Reports</button>
         <button class="nav-btn" data-view="incomestatement"><span class="ic">&#9755;</span> Income Statement</button>
@@ -108,11 +111,13 @@
 
     <!-- ======================= DAILY SALES ======================= -->
     <section id="view-sales" class="view">
+      <p class="section-note">You're logging sales for <strong id="sales-entity-label"></strong>. To log a sale for the other entity, use its own page in the sidebar — this keeps the two from getting mixed up.</p>
       <p class="section-note">Enter a "Tax withheld" amount if the customer withheld EWT before paying you — a matching 2307 (Received) is created automatically in the 2307 Register, so you don't have to enter it twice.</p>
       <div class="panel">
         <div class="panel-head"><h2 id="sales-form-title">Log a sale</h2></div>
         <form id="sales-form" class="form-grid">
           <input type="hidden" id="sales-id" />
+          <input type="hidden" id="sales-entity" />
           <div class="field"><label>Date</label><input type="date" id="sales-date" required /></div>
           <div class="field wide"><label>Tradename / Customer</label><input list="customer-list" id="sales-tradename" required placeholder="e.g. JUAN DELA CRUZ PRINTING" /></div>
           <div class="field"><label>Quote No.</label><input id="sales-quote" placeholder="QU-..." /></div>
@@ -121,13 +126,6 @@
           <div class="field"><label>Amount received</label><input type="number" step="0.01" min="0" id="sales-received" value="0" /></div>
           <div class="field"><label>Mode of payment</label><input list="payment-modes" id="sales-mode" /></div>
           <div class="field"><label>Xero Invoice No.</label><input id="sales-invoice" placeholder="INV-..." /></div>
-          <div class="field"><label>Business entity</label>
-            <select id="sales-entity">
-              <option value="">(not set)</option>
-              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship</option>
-              <option value="CORPORATION">Corporation</option>
-            </select>
-          </div>
           <div class="field"><label>Customer TIN</label><input id="sales-tin" placeholder="000-000-000-000" /></div>
           <div class="field"><label>ATC</label><input id="sales-atc" placeholder="WC160..." /></div>
           <div class="field"><label>Tax withheld</label><input type="number" step="0.01" min="0" id="sales-taxwithheld" placeholder="0.00" /></div>
@@ -157,13 +155,6 @@
             </select>
           </div>
           <div class="field"><label>Search</label><input id="sales-f-search" placeholder="Tradename..." /></div>
-          <div class="field"><label>Entity</label>
-            <select id="sales-f-entity">
-              <option value="">All</option>
-              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship</option>
-              <option value="CORPORATION">Corporation</option>
-            </select>
-          </div>
           <button class="btn small" id="sales-f-apply">Filter</button>
           <button class="btn small ghost" id="sales-f-clear">Clear</button>
           <button class="btn small accent" id="sales-export">Export CSV</button>
@@ -171,7 +162,7 @@
         <div class="table-wrap"><table class="data" id="sales-table">
           <thead><tr>
             <th>Date</th><th>Tradename</th><th>Staff</th><th class="num">Total</th><th class="num">Received</th>
-            <th class="num">Balance</th><th>Status</th><th>Mode</th><th>Xero Invoice</th><th>Entity</th><th>2307</th><th>Sales Rpt</th><th>Actions</th>
+            <th class="num">Balance</th><th>Status</th><th>Mode</th><th>Xero Invoice</th><th>2307</th><th>Sales Rpt</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
@@ -180,11 +171,13 @@
 
     <!-- ======================= DAILY EXPENSES ======================= -->
     <section id="view-expenses" class="view">
+      <p class="section-note">You're logging expenses for <strong id="expenses-entity-label"></strong>. To log an expense for the other entity, use its own page in the sidebar — this keeps the two from getting mixed up.</p>
       <p class="section-note">Enter a "Tax withheld" amount if you deducted EWT before paying this vendor — a matching 2307 (Issued) is created automatically in the 2307 Register, so you don't have to enter it twice.</p>
       <div class="panel">
         <div class="panel-head"><h2 id="expenses-form-title">Log an expense</h2></div>
         <form id="expenses-form" class="form-grid">
           <input type="hidden" id="expenses-id" />
+          <input type="hidden" id="expenses-entity" />
           <div class="field"><label>Date</label><input type="date" id="expenses-date" required /></div>
           <div class="field"><label>Scope</label>
             <select id="expenses-scope">
@@ -365,7 +358,7 @@
 
     <!-- ======================= DAILY OPERATIONS REPORT ======================= -->
     <section id="view-opsreport" class="view">
-      <p class="section-note">Cash/sales summary for closing the register, an expenses-by-category breakdown, plus a per-staff breakdown for the period you pick. The Entity filter splits Sales-related figures only — Expenses aren't tagged by entity, so those stay combined regardless of the filter.</p>
+      <p class="section-note">Cash/sales summary for closing the register, an expenses-by-category breakdown, plus a per-staff breakdown for the period you pick. The Entity filter applies to both Sales and Expenses.</p>
       <div class="panel">
         <div class="filters">
           <div class="field"><label>From</label><input type="date" id="opsreport-from" /></div>
@@ -510,6 +503,48 @@
       </div>
     </section>
 
+    <!-- ======================= EXPENSES REPORT ======================= -->
+    <section id="view-expensesreport" class="view">
+      <p class="section-note">All logged expenses, for BIR review — combine both entities or filter to just one.</p>
+      <div class="panel">
+        <div class="filters">
+          <div class="field"><label>From</label><input type="date" id="expreport-from" /></div>
+          <div class="field"><label>To</label><input type="date" id="expreport-to" /></div>
+          <div class="field"><label>Entity</label>
+            <select id="expreport-entity">
+              <option value="">Combined</option>
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship only</option>
+              <option value="CORPORATION">Corporation only</option>
+            </select>
+          </div>
+          <button class="btn small" id="expreport-apply">Run</button>
+          <button class="btn small ghost" id="expreport-mtd">This month</button>
+          <button class="btn small accent" id="expreport-export">Export CSV</button>
+        </div>
+      </div>
+
+      <div class="card-grid" id="expreport-cards"></div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>By category</h2></div>
+        <div class="table-wrap"><table class="data" id="expreport-category-table">
+          <thead><tr><th>Category</th><th class="num"># Transactions</th><th class="num">Total</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Expense register</h2></div>
+        <div class="table-wrap"><table class="data" id="expreport-table">
+          <thead><tr>
+            <th>Date</th><th>Business</th><th>Category</th><th>Tax type</th><th>Entity</th>
+            <th class="num">Amount</th><th>Mode</th><th>ATC</th><th class="num">Tax Withheld</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+    </section>
+
     <!-- ======================= 2307 REGISTER ======================= -->
     <section id="view-withholding" class="view">
       <p class="section-note">Creditable withholding tax certificates (BIR Form 2307) — RECEIVED are certificates you hold, proving a client withheld tax from a payment to you, and sync in automatically from Daily Sales when a "Tax withheld" amount is entered there; ISSUED are certificates you owe a vendor, because you withheld tax paying them, and sync in automatically from Daily Expenses the same way. Use the form below only for adjustments or entries with no matching sale/expense row.</p>
@@ -618,7 +653,7 @@
           <button class="btn small" id="incstmt-apply">Run</button>
           <button class="btn small ghost" id="incstmt-ytd">This year</button>
         </div>
-        <p class="section-note" style="margin-top:8px;">Entity filter applies to Revenue only (from the Sales Report) — Expenses aren't tagged by entity.</p>
+        <p class="section-note" style="margin-top:8px;">Entity filter applies to both Revenue (from the Sales Report) and Expenses.</p>
       </div>
 
       <div class="card-grid" id="incstmt-cards"></div>
