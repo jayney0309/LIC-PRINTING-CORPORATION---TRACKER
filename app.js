@@ -398,6 +398,10 @@
     });
     $("sales-cancel-edit").addEventListener("click", resetSalesForm);
     $("sales-f-apply").addEventListener("click", loadSales);
+    $("sales-f-search").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); loadSales(); }
+    });
+    ["sales-f-from", "sales-f-to", "sales-f-status"].forEach((id) => $(id).addEventListener("change", loadSales));
     $("sales-f-clear").addEventListener("click", () => {
       ["sales-f-from", "sales-f-to", "sales-f-search"].forEach((id) => ($(id).value = ""));
       $("sales-f-status").value = "";
@@ -634,6 +638,10 @@
     });
     $("expenses-cancel-edit").addEventListener("click", resetExpensesForm);
     $("expenses-f-apply").addEventListener("click", loadExpenses);
+    $("expenses-f-search").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); loadExpenses(); }
+    });
+    ["expenses-f-from", "expenses-f-to"].forEach((id) => $(id).addEventListener("change", loadExpenses));
     $("expenses-f-clear").addEventListener("click", () => {
       ["expenses-f-from", "expenses-f-to", "expenses-f-category", "expenses-f-search"].forEach((id) => ($(id).value = ""));
       loadExpenses();
