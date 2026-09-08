@@ -13,16 +13,18 @@
     CONFIG.SUPABASE_ANON_KEY &&
     !/YOUR-PROJECT-REF|YOUR-ANON-PUBLIC-KEY/.test(CONFIG.SUPABASE_URL + CONFIG.SUPABASE_ANON_KEY);
 
-  let sb = null;
-  if (configOk && window.supabase) {
-    sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
-  }
-  document.getElementById("config-banner").style.display = configOk ? "none" : "block";
-  document.getElementById("brand-name").textContent = CONFIG.COMPANY_NAME || "LIC Printing Shops
-  document.getElementById("brand-sub").textContent = "Books & Tax System";
-  document.getElementById("login-brand-name").textContent = CONFIG.COMPANY_NAME || "LIC Printing Shop";
+let sb = null;
+if (configOk && window.supabase) {
+  sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+}
 
-  document.getElementById("today-label").textContent = new Date().toLocaleDateString("en-PH", {
+document.getElementById("config-banner").style.display = configOk ? "none" : "block";
+document.getElementById("brand-name").textContent = CONFIG.COMPANY_NAME || "LIC Printing Shops";
+document.getElementById("brand-sub").textContent = "Books & Tax System";
+document.getElementById("login-brand-name").textContent = CONFIG.COMPANY_NAME || "LIC Printing Shop";
+
+document.getElementById("today-label").textContent = new Date().toLocaleDateString("en-PH", {
+
     weekday: "long", year: "numeric", month: "long", day: "numeric",
   });
 
