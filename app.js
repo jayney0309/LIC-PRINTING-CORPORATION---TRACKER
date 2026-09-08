@@ -18,7 +18,7 @@
     sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
   }
   document.getElementById("config-banner").style.display = configOk ? "none" : "block";
-  document.getElementById("brand-name").textContent = CONFIG.COMPANY_NAME || "LIC Printing Shop";
+  document.getElementById("brand-name").textContent = CONFIG.COMPANY_NAME || "LIC Printing Shops
   document.getElementById("brand-sub").textContent = "Books & Tax System";
   document.getElementById("login-brand-name").textContent = CONFIG.COMPANY_NAME || "LIC Printing Shop";
 
@@ -111,10 +111,10 @@
   let bootedAfterAuth = false;
 
   const ADMIN_ONLY_VIEWS = ["invoices", "expensesreport", "withholding", "reports", "incomestatement"];
-  let currentRole = "staff";
+  let currentRole = "Service Representatives";
 
   // Daily Sales and Daily Expenses each have two locked-entity nav entries
-  // (Sole Prop / Corp) instead of a dropdown on the form, so staff can't
+  // (Sole Prop / Corp) instead of a dropdown on the form, so Service Representatives can't
   // accidentally file one entity's transaction under the other.
   let currentSalesEntity = "SOLE PROPRIETORSHIP";
   let currentExpensesEntity = "SOLE PROPRIETORSHIP";
@@ -132,7 +132,7 @@
   function showAppShell(session) {
     $("login-screen").style.display = "none";
     $("app-shell").style.display = "flex";
-    currentRole = session?.user?.user_metadata?.role === "admin" ? "admin" : "staff";
+    currentRole = session?.user?.user_metadata?.role === "admin" ? "admin" : "Service Representatives";
     $("signed-in-as").textContent = session?.user?.email
       ? `Signed in as ${session.user.email} (${currentRole === "admin" ? "Administrator" : "Employee"})`
       : "";
@@ -193,12 +193,12 @@
   }
 
   // ---------------------------------------------------------------- nav
-  const views = ["dashboard", "sales", "expenses", "receivables", "bills", "opsreport", "staff", "invoices", "expensesreport", "withholding", "reports", "incomestatement"];
+  const views = ["dashboard", "sales", "expenses", "receivables", "bills", "opsreport", "Service Representatives", "invoices", "expensesreport", "withholding", "reports", "incomestatement"];
   const titles = {
     dashboard: "Dashboard",
     "sales-sp": "Daily Sales — LIC Printing Shop", "sales-corp": "Daily Sales — LIC Printing Corporation",
     "expenses-sp": "Daily Expenses — LIC Printing Shop", "expenses-corp": "Daily Expenses — LIC Printing Corporation",
-    receivables: "Receivables", bills: "Bill Tracker", opsreport: "Daily Operations Report", staff: "Staff",
+    receivables: "Receivables", bills: "Bill Tracker", opsreport: "Daily Operations Report", Service Representatives: "Service Representatives",
     invoices: "Sales Report", expensesreport: "Expenses Report", withholding: "2307 Register", reports: "Reports", incomestatement: "Income Statement",
   };
   const loaded = {};
@@ -206,7 +206,7 @@
     dashboard: loadDashboard,
     "sales-sp": loadSales, "sales-corp": loadSales,
     "expenses-sp": loadExpenses, "expenses-corp": loadExpenses,
-    receivables: loadReceivables, bills: loadBills, opsreport: loadOpsReport, staff: loadStaff,
+    receivables: loadReceivables, bills: loadBills, opsreport: loadOpsReport, Service Representatives: loadService Representatives,
     invoices: loadInvoices, expensesreport: loadExpensesReport, withholding: loadWithholding, reports: loadReports, incomestatement: loadIncomeStatement,
   };
 
@@ -241,8 +241,8 @@
   async function refreshDatalists() {
     if (!sb) return;
     try {
-      const { data: staff } = await sb.from("staff").select("name").eq("active", true).order("name");
-      $("staff-list").innerHTML = (staff || []).map((s) => `<option value="${escapeHtml(s.name)}">`).join("");
+      const { data: Service Representatives } = await sb.from("Service Representatives").select("name").eq("active", true).order("name");
+      $("Service Representatives-list").innerHTML = (Service Representatives || []).map((s) => `<option value="${escapeHtml(s.name)}">`).join("");
 
       const { data: custs } = await sb.from("sales").select("tradename").limit(1000);
       const names = Array.from(new Set((custs || []).map((c) => c.tradename).filter(Boolean))).sort();
@@ -361,7 +361,7 @@
         trx_date: $("sales-date").value,
         tradename: $("sales-tradename").value.trim(),
         quote_no: $("sales-quote").value.trim() || null,
-        reference_person: $("sales-staff").value.trim() || null,
+        reference_person: $("sales-Service Representatives").value.trim() || null,
         total_amount: Number($("sales-total").value || 0),
         amount_received: Number($("sales-received").value || 0),
         mode_of_payment: $("sales-mode").value.trim() || null,
@@ -412,7 +412,7 @@
       const rows = await fetchSalesRows();
       downloadCSV(currentSalesEntity === "CORPORATION" ? "sales_corporation.csv" : "sales_sole_prop.csv", rows, [
         { label: "Date", key: "trx_date" }, { label: "Tradename", key: "tradename" },
-        { label: "Staff", key: "reference_person" }, { label: "Total", key: "total_amount" },
+        { label: "Service Representatives", key: "reference_person" }, { label: "Total", key: "total_amount" },
         { label: "Received", key: "amount_received" }, { label: "Balance", key: "balance" },
         { label: "Status", key: "status" }, { label: "Mode", key: "mode_of_payment" },
         { label: "Xero Invoice No", key: "invoice_no" }, { label: "Business Entity", key: "business_entity" },
@@ -569,7 +569,7 @@
     $("sales-date").value = r.trx_date;
     $("sales-tradename").value = r.tradename || "";
     $("sales-quote").value = r.quote_no || "";
-    $("sales-staff").value = r.reference_person || "";
+    $("sales-Service Representatives").value = r.reference_person || "";
     $("sales-total").value = r.total_amount;
     $("sales-received").value = r.amount_received;
     $("sales-mode").value = r.mode_of_payment || "";
@@ -1715,7 +1715,7 @@
   }
 
   /* =====================================================================
-     DAILY OPERATIONS REPORT (cash/sales summary + staff performance)
+     DAILY OPERATIONS REPORT (cash/sales summary + Service Representatives performance)
      ===================================================================== */
   let lastExpCatRows = [];
   function initOpsReportForm() {
@@ -1825,80 +1825,80 @@
         </tr>`
       : `<tr class="empty-row"><td colspan="4">No expenses in this period</td></tr>`;
 
-    // ---- staff performance ----
-    const staff = {};
+    // ---- Service Representatives performance ----
+    const Service Representatives = {};
     (sales || []).forEach((r) => {
       const name = r.reference_person || "(unassigned)";
-      staff[name] = staff[name] || { count: 0, total: 0, received: 0, balance: 0 };
-      staff[name].count += 1;
-      staff[name].total += Number(r.total_amount || 0);
-      staff[name].received += Number(r.amount_received || 0);
-      staff[name].balance += Number(r.balance || 0);
+      Service Representatives[name] = Service Representatives[name] || { count: 0, total: 0, received: 0, balance: 0 };
+      Service Representatives[name].count += 1;
+      Service Representatives[name].total += Number(r.total_amount || 0);
+      Service Representatives[name].received += Number(r.amount_received || 0);
+      Service Representatives[name].balance += Number(r.balance || 0);
     });
-    const staffNames = Object.keys(staff).sort((a, b) => staff[b].total - staff[a].total);
-    const stb = $("opsreport-staff-table").querySelector("tbody");
-    stb.innerHTML = staffNames.length
-      ? staffNames.map((name) => {
-          const s = staff[name];
+    const Service RepresentativesNames = Object.keys(Service Representatives).sort((a, b) => Service Representatives[b].total - Service Representatives[a].total);
+    const stb = $("opsreport-Service Representatives-table").querySelector("tbody");
+    stb.innerHTML = Service RepresentativesNames.length
+      ? Service RepresentativesNames.map((name) => {
+          const s = Service Representatives[name];
           return `<tr>
             <td>${escapeHtml(name)}</td><td class="num">${s.count}</td>
             <td class="num">₱ ${fmtMoney(s.total)}</td><td class="num">₱ ${fmtMoney(s.received)}</td>
             <td class="num">₱ ${fmtMoney(s.balance)}</td>
           </tr>`;
         }).join("") + `<tr>
-            <td><strong>TOTAL</strong></td><td class="num"><strong>${staffNames.reduce((a, n) => a + staff[n].count, 0)}</strong></td>
+            <td><strong>TOTAL</strong></td><td class="num"><strong>${Service RepresentativesNames.reduce((a, n) => a + Service Representatives[n].count, 0)}</strong></td>
             <td class="num"><strong>₱ ${fmtMoney(totalSales)}</strong></td><td class="num"><strong>₱ ${fmtMoney(totalReceived)}</strong></td>
-            <td class="num"><strong>₱ ${fmtMoney(staffNames.reduce((a, n) => a + staff[n].balance, 0))}</strong></td>
+            <td class="num"><strong>₱ ${fmtMoney(Service RepresentativesNames.reduce((a, n) => a + Service Representatives[n].balance, 0))}</strong></td>
           </tr>`
       : `<tr class="empty-row"><td colspan="5">No sales in this period</td></tr>`;
   }
 
   /* =====================================================================
-     STAFF (manage who shows up in the Staff dropdown)
+     Service Representatives (manage who shows up in the Service Representatives dropdown)
      ===================================================================== */
-  function initStaffForm() {
-    $("staff-form").addEventListener("submit", async (e) => {
+  function initService RepresentativesForm() {
+    $("Service Representatives-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!requireDb()) return;
-      const name = $("staff-name").value.trim();
+      const name = $("Service Representatives-name").value.trim();
       if (!name) return;
-      const { error } = await sb.from("staff").insert({ name });
+      const { error } = await sb.from("Service Representatives").insert({ name });
       if (error) return toast(error.message, true);
-      toast("Staff added");
-      $("staff-form").reset();
-      loadStaff();
+      toast("Service Representatives added");
+      $("Service Representatives-form").reset();
+      loadService Representatives();
       refreshDatalists();
     });
   }
-  async function loadStaff() {
+  async function loadService Representatives() {
     if (!requireDb()) return;
-    const { data: rows, error } = await sb.from("staff").select("*").order("name");
+    const { data: rows, error } = await sb.from("Service Representatives").select("*").order("name");
     if (error) return toast(error.message, true);
-    const tb = $("staff-table").querySelector("tbody");
+    const tb = $("Service Representatives-table").querySelector("tbody");
     tb.innerHTML = (rows || []).length
       ? rows.map((r) => `<tr>
           <td>${escapeHtml(r.name)}</td>
           <td><span class="badge ${r.active ? "good" : "neutral"}">${r.active ? "ACTIVE" : "INACTIVE"}</span></td>
           <td class="row-actions">
-            <button class="btn small" data-toggle-staff="${r.id}" data-active="${r.active}">${r.active ? "Deactivate" : "Reactivate"}</button>
-            <button class="btn small danger" data-del-staff="${r.id}">Delete</button>
+            <button class="btn small" data-toggle-Service Representatives="${r.id}" data-active="${r.active}">${r.active ? "Deactivate" : "Reactivate"}</button>
+            <button class="btn small danger" data-del-Service Representatives="${r.id}">Delete</button>
           </td>
         </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="3">No staff added yet</td></tr>`;
-    tb.querySelectorAll("[data-toggle-staff]").forEach((btn) =>
+      : `<tr class="empty-row"><td colspan="3">No Service Representatives added yet</td></tr>`;
+    tb.querySelectorAll("[data-toggle-Service Representatives]").forEach((btn) =>
       btn.addEventListener("click", async () => {
         if (!requireDb()) return;
-        const id = btn.dataset.toggleStaff;
+        const id = btn.dataset.toggleService Representatives;
         const nowActive = btn.dataset.active !== "true";
-        const { error } = await sb.from("staff").update({ active: nowActive }).eq("id", id);
+        const { error } = await sb.from("Service Representatives").update({ active: nowActive }).eq("id", id);
         if (error) return toast(error.message, true);
-        toast(nowActive ? "Staff reactivated" : "Staff deactivated");
-        loadStaff();
+        toast(nowActive ? "Service Representatives reactivated" : "Service Representatives deactivated");
+        loadService Representatives();
         refreshDatalists();
       })
     );
-    tb.querySelectorAll("[data-del-staff]").forEach((btn) =>
-      btn.addEventListener("click", () => deleteRow("staff", btn.dataset.delStaff, () => { loadStaff(); refreshDatalists(); }))
+    tb.querySelectorAll("[data-del-Service Representatives]").forEach((btn) =>
+      btn.addEventListener("click", () => deleteRow("Service Representatives", btn.dataset.delService Representatives, () => { loadService Representatives(); refreshDatalists(); }))
     );
   }
 
@@ -2086,7 +2086,7 @@
   initExpensesReportForm();
   initWithholdingForm();
   initOpsReportForm();
-  initStaffForm();
+  initService RepresentativesForm();
   initIncomeStatementForm();
   initAuthGate();
 })();
