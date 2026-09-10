@@ -13,18 +13,16 @@
     CONFIG.SUPABASE_ANON_KEY &&
     !/YOUR-PROJECT-REF|YOUR-ANON-PUBLIC-KEY/.test(CONFIG.SUPABASE_URL + CONFIG.SUPABASE_ANON_KEY);
 
-let sb = null;
-if (configOk && window.supabase) {
-  sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
-}
+  let sb = null;
+  if (configOk && window.supabase) {
+    sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+  }
+  document.getElementById("config-banner").style.display = configOk ? "none" : "block";
+  document.getElementById("brand-name").textContent = CONFIG.COMPANY_NAME || "LIC Printing Shop";
+  document.getElementById("brand-sub").textContent = "Books & Tax System";
+  document.getElementById("login-brand-name").textContent = CONFIG.COMPANY_NAME || "LIC Printing Shop";
 
-document.getElementById("config-banner").style.display = configOk ? "none" : "block";
-document.getElementById("brand-name").textContent = CONFIG.COMPANY_NAME || "LIC Printing Shops";
-document.getElementById("brand-sub").textContent = "Books & Tax System";
-document.getElementById("login-brand-name").textContent = CONFIG.COMPANY_NAME || "LIC Printing Shop";
-
-document.getElementById("today-label").textContent = new Date().toLocaleDateString("en-PH", {
-
+  document.getElementById("today-label").textContent = new Date().toLocaleDateString("en-PH", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
   });
 
@@ -131,6 +129,24 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
     return v === "CORPORATION" ? "LIC Printing Corporation" : "LIC Printing Shop (Sole Proprietorship)";
   }
 
+  // Default ATC suggested for each withholding rate -- a starting point only.
+  // The real ATC also depends on the nature of the income payment (goods vs.
+  // services vs. rent vs. professional fee), which this app has no way to
+  // know automatically, so the field stays editable — treat this as a
+  // best-guess default to speed up entry, not a compliance guarantee.
+  const ATC_BY_RATE = {
+    "0.01": "WC160", // 1% — goods, top withholding agent
+    "0.02": "WC158", // 2% — services, top withholding agent
+    "0.05": "WC100", // 5% — rental / certain brokers & agents
+    "0.10": "WI010", // 10% — professional/talent fees (individual)
+  };
+
+  // VAT threshold for monitoring Corp (Non-VAT) cumulative sales. BIR's
+  // current VAT registration threshold is ₱3,000,000 (Sec. 109(BB) NIRC, as
+  // last amended by the TRAIN law) -- confirm this hasn't changed before
+  // relying on it, since Congress can adjust it.
+  const VAT_THRESHOLD = 3000000;
+
   function showAppShell(session) {
     $("login-screen").style.display = "none";
     $("app-shell").style.display = "flex";
@@ -195,12 +211,13 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
   }
 
   // ---------------------------------------------------------------- nav
-  const views = ["dashboard", "sales", "expenses", "receivables", "bills", "opsreport", "staff", "invoices", "expensesreport", "withholding", "reports", "incomestatement"];
+  const views = ["dashboard", "sales", "expenses", "pettycash", "receivables", "bills", "opsreport", "staff", "invoices", "expensesreport", "withholding", "reports", "incomestatement"];
   const titles = {
     dashboard: "Dashboard",
     "sales-sp": "Daily Sales — LIC Printing Shop", "sales-corp": "Daily Sales — LIC Printing Corporation",
     "expenses-sp": "Daily Expenses — LIC Printing Shop", "expenses-corp": "Daily Expenses — LIC Printing Corporation",
-    receivables: "Receivables", bills: "Bill Tracker", opsreport: "Daily Operations Report", staff: "staff",
+    pettycash: "Petty Cash Vouchers",
+    receivables: "Receivables", bills: "Bill Tracker", opsreport: "Daily Operations Report", staff: "Staff",
     invoices: "Sales Report", expensesreport: "Expenses Report", withholding: "2307 Register", reports: "Reports", incomestatement: "Income Statement",
   };
   const loaded = {};
@@ -208,7 +225,8 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
     dashboard: loadDashboard,
     "sales-sp": loadSales, "sales-corp": loadSales,
     "expenses-sp": loadExpenses, "expenses-corp": loadExpenses,
-    receivables: loadReceivables, bills: loadBills, opsreport: loadOpsReport, staff: loadstaff,
+    pettycash: loadPettyCash,
+    receivables: loadReceivables, bills: loadBills, opsreport: loadOpsReport, staff: loadStaff,
     invoices: loadInvoices, expensesreport: loadExpensesReport, withholding: loadWithholding, reports: loadReports, incomestatement: loadIncomeStatement,
   };
 
@@ -223,6 +241,8 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
         currentSalesEntity = nav.entity;
         $("sales-entity").value = currentSalesEntity;
         $("sales-entity-label").textContent = fullEntityLabel(currentSalesEntity);
+        updateSalesFormForEntity();
+        checkCorpVatThreshold();
       } else {
         currentExpensesEntity = nav.entity;
         $("expenses-entity").value = currentExpensesEntity;
@@ -352,19 +372,100 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
   /* =====================================================================
      DAILY SALES
      ===================================================================== */
+  // Sole Prop is VAT-registered -- show zero-rated/exempt + VAT preview.
+  // Corp is Non-VAT -- hide those (item 7): only gross/discount/tax withheld
+  // apply there, plus a threshold banner if cumulative sales get close to
+  // (or cross) the VAT registration threshold.
+  function updateSalesFormForEntity() {
+    const isSoleProp = currentSalesEntity === "SOLE PROPRIETORSHIP";
+    ["sales-zerorated-field", "sales-vatexempt-field", "sales-vat-preview-field"].forEach((id) => {
+      $(id).style.display = isSoleProp ? "" : "none";
+    });
+    updateSalesVatPreview();
+  }
+  function updateSalesVatPreview() {
+    if (currentSalesEntity !== "SOLE PROPRIETORSHIP") return;
+    const gross = Number($("sales-total").value || 0);
+    const exempt = $("sales-vatexempt").checked || $("sales-zerorated").checked;
+    const { vat } = computeNetVat(gross, currentSalesEntity, exempt);
+    $("sales-vat-preview").value = "₱ " + fmtMoney(vat) + ($("sales-zerorated").checked ? " (zero-rated)" : $("sales-vatexempt").checked ? " (exempt)" : "");
+  }
+  function updateSalesTaxWithheldFromPct() {
+    const pct = $("sales-taxwithheld-pct").value;
+    if (!pct) return;
+    const gross = Number($("sales-total").value || 0);
+    $("sales-taxwithheld").value = gross > 0 ? (gross * Number(pct)).toFixed(2) : "";
+    $("sales-atc").value = ATC_BY_RATE[pct] || $("sales-atc").value;
+    updateSales2307FieldVisibility();
+  }
+  function updateSales2307FieldVisibility() {
+    const show = Number($("sales-taxwithheld").value || 0) > 0;
+    $("sales-2307status-field").style.display = show ? "" : "none";
+    $("sales-2307upload-field").style.display = show && $("sales-2307status").value === "yes" ? "" : "none";
+  }
+  // Advisory only -- never auto-charges VAT on Corp sales. Crossing the
+  // threshold is a real BIR registration change (new COR, new invoicing
+  // rules) that has to happen through BIR first; the app just flags it so
+  // 5JS can review and act on it with the client.
+  async function checkCorpVatThreshold() {
+    const banner = $("sales-vat-threshold-banner");
+    if (currentSalesEntity !== "CORPORATION" || !sb) { banner.style.display = "none"; return; }
+    const yearStart = new Date().getFullYear() + "-01-01";
+    const { data } = await sb.from("sales").select("total_amount").eq("business_entity", "CORPORATION").gte("trx_date", yearStart);
+    const ytd = (data || []).reduce((a, r) => a + Number(r.total_amount || 0), 0);
+    if (ytd >= VAT_THRESHOLD) {
+      banner.textContent = `⚠ LIC Printing Corporation's cumulative sales this year are ₱${fmtMoney(ytd)} — at or above the ₱${fmtMoney(VAT_THRESHOLD)} VAT threshold. This is a monitoring flag only (VAT is NOT auto-charged here) — please review VAT registration status with BIR.`;
+      banner.style.display = "";
+    } else if (ytd >= VAT_THRESHOLD * 0.85) {
+      banner.textContent = `Note: LIC Printing Corporation's cumulative sales this year are ₱${fmtMoney(ytd)}, approaching the ₱${fmtMoney(VAT_THRESHOLD)} VAT threshold.`;
+      banner.style.display = "";
+    } else {
+      banner.style.display = "none";
+    }
+  }
+  async function uploadClientCertificate(file, saleId) {
+    if (!file) return null;
+    const path = `2307-received/${saleId}-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+    const { error } = await sb.storage.from("attachments").upload(path, file, { upsert: true });
+    if (error) {
+      toast("Sale saved, but the 2307 file upload failed: " + error.message + " (has the 'attachments' Storage bucket been created in Supabase?)", true);
+      return null;
+    }
+    return path;
+  }
   function initSalesForm() {
     $("sales-date").value = todayISO();
     $("sales-entity").value = currentSalesEntity;
+    updateSalesFormForEntity();
+    $("sales-total").addEventListener("input", () => { updateSalesTaxWithheldFromPct(); updateSalesVatPreview(); });
+    $("sales-taxwithheld-pct").addEventListener("change", updateSalesTaxWithheldFromPct);
+    $("sales-taxwithheld").addEventListener("input", updateSales2307FieldVisibility);
+    $("sales-2307status").addEventListener("change", updateSales2307FieldVisibility);
+    $("sales-zerorated").addEventListener("change", () => {
+      if ($("sales-zerorated").checked) $("sales-vatexempt").checked = false;
+      updateSalesVatPreview();
+    });
+    $("sales-vatexempt").addEventListener("change", () => {
+      if ($("sales-vatexempt").checked) $("sales-zerorated").checked = false;
+      updateSalesVatPreview();
+    });
     $("sales-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!requireDb()) return;
       const id = $("sales-id").value;
+      const grossAmount = Number($("sales-total").value || 0);
+      const zeroRated = $("sales-zerorated").checked;
+      const vatExempt = $("sales-vatexempt").checked;
+      const { vat } = computeNetVat(grossAmount, $("sales-entity").value, zeroRated || vatExempt);
+      const pct = $("sales-taxwithheld-pct").value;
+      const clientIssuedSel = $("sales-2307status").value; // "", "yes", "no"
+      const certFile = $("sales-2307upload").files[0] || null;
       const payload = {
         trx_date: $("sales-date").value,
         tradename: $("sales-tradename").value.trim(),
         quote_no: $("sales-quote").value.trim() || null,
         reference_person: $("sales-staff").value.trim() || null,
-        total_amount: Number($("sales-total").value || 0),
+        total_amount: grossAmount,
         amount_received: Number($("sales-received").value || 0),
         mode_of_payment: $("sales-mode").value.trim() || null,
         invoice_no: $("sales-invoice").value.trim() || null,
@@ -372,8 +473,14 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
         tin: $("sales-tin").value.trim() || null,
         atc: $("sales-atc").value.trim() || null,
         tax_withheld: $("sales-taxwithheld").value ? Number($("sales-taxwithheld").value) : null,
+        tax_withheld_rate: pct ? Number(pct) : null,
         bir_receipt_no: $("sales-bir").value.trim() || null,
         is_walkin: $("sales-walkin").checked,
+        zero_rated: zeroRated,
+        vat_exempt: vatExempt,
+        vat_amount: currentSalesEntity === "SOLE PROPRIETORSHIP" ? vat : 0,
+        discount_amount: $("sales-discount").value ? Number($("sales-discount").value) : 0,
+        discount_details: $("sales-discount-details").value.trim() || null,
         description: $("sales-description").value.trim() || null,
         remarks: $("sales-remarks").value.trim() || null,
       };
@@ -388,7 +495,12 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
       if (error) return toast(error.message, true);
       let msg = id ? "Sale updated" : "Sale saved";
       if (savedId) {
-        await syncSaleWithholding(savedId, payload);
+        let certPath = null;
+        if (certFile) certPath = await uploadClientCertificate(certFile, savedId);
+        await syncSaleWithholding(savedId, payload, {
+          clientIssued: clientIssuedSel === "yes" ? true : clientIssuedSel === "no" ? false : null,
+          certificateFilePath: certPath,
+        });
         if (Number(payload.tax_withheld || 0) > 0) msg += " — 2307 (Received) synced";
         await syncSalesReport(savedId, payload);
         if ((payload.bir_receipt_no || "").trim()) msg += " — Sales Report synced";
@@ -397,6 +509,7 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
       resetSalesForm();
       loadSales();
       loadDashboard.dirty = true;
+      if (currentSalesEntity === "CORPORATION") checkCorpVatThreshold();
     });
     $("sales-cancel-edit").addEventListener("click", resetSalesForm);
     $("sales-f-apply").addEventListener("click", loadSales);
@@ -414,7 +527,7 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
       const rows = await fetchSalesRows();
       downloadCSV(currentSalesEntity === "CORPORATION" ? "sales_corporation.csv" : "sales_sole_prop.csv", rows, [
         { label: "Date", key: "trx_date" }, { label: "Tradename", key: "tradename" },
-        { label: "staff", key: "reference_person" }, { label: "Total", key: "total_amount" },
+        { label: "Staff", key: "reference_person" }, { label: "Total", key: "total_amount" },
         { label: "Received", key: "amount_received" }, { label: "Balance", key: "balance" },
         { label: "Status", key: "status" }, { label: "Mode", key: "mode_of_payment" },
         { label: "Xero Invoice No", key: "invoice_no" }, { label: "Business Entity", key: "business_entity" },
@@ -430,14 +543,17 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
     $("sales-entity").value = currentSalesEntity;
     $("sales-date").value = todayISO();
     $("sales-received").value = "0";
+    $("sales-vat-preview").value = "";
     $("sales-form-title").textContent = "Log a sale";
     $("sales-cancel-edit").style.display = "none";
+    updateSalesFormForEntity();
+    updateSales2307FieldVisibility();
   }
 
   // A sale with tax actually withheld means the customer is the withholding
   // agent and owes US a 2307 (we hold it as a tax credit) — keep one
   // withholding_2307 row (direction 'received') in sync with each sale row.
-  async function syncSaleWithholding(saleId, payload) {
+  async function syncSaleWithholding(saleId, payload, opts) {
     const taxWithheld = Number(payload.tax_withheld || 0);
     if (taxWithheld > 0) {
       const monthStr = payload.trx_date.slice(0, 7);
@@ -454,7 +570,11 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
         tax_withheld: taxWithheld,
         invoice_ref: payload.invoice_no,
         business_entity: payload.business_entity || null,
+        // Whether the client has actually handed over the physical 2307 --
+        // NOT auto-assumed true just because tax was withheld (item 3).
+        client_issued: opts && opts.clientIssued !== undefined ? opts.clientIssued : null,
       };
+      if (opts && opts.certificateFilePath) whPayload.certificate_file_path = opts.certificateFilePath;
       const { error } = await sb.from("withholding_2307").upsert(whPayload, { onConflict: "sale_id" });
       if (error) toast("Sale saved, but the linked 2307 failed: " + error.message, true);
     } else {
@@ -469,8 +589,8 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
   // LIC Printing Shop (Sole Proprietorship) is VAT-registered; LIC Printing
   // Corporation is NON-VAT (percentage tax) -- non-VAT receipts show no VAT
   // breakdown, so gross = net and VAT = 0 for that entity.
-  function computeNetVat(gross, entity) {
-    if (entity === "CORPORATION") return { net: gross, vat: 0 };
+  function computeNetVat(gross, entity, exemptOrZeroRated) {
+    if (entity === "CORPORATION" || exemptOrZeroRated) return { net: gross, vat: 0 };
     const net = gross / 1.12;
     return { net, vat: gross - net };
   }
@@ -478,7 +598,7 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
     const receiptNo = (payload.bir_receipt_no || "").trim();
     if (receiptNo) {
       const gross = Number(payload.total_amount || 0);
-      const { net, vat } = computeNetVat(gross, payload.business_entity);
+      const { net, vat } = computeNetVat(gross, payload.business_entity, payload.zero_rated || payload.vat_exempt);
       const taxWithheld = Number(payload.tax_withheld || 0);
       const monthStr = payload.trx_date.slice(0, 7);
       const invPayload = {
@@ -565,7 +685,7 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
       })
     );
   }
-  function editSale(r) {
+  async function editSale(r) {
     if (!r) return;
     $("sales-id").value = r.id;
     $("sales-date").value = r.trx_date;
@@ -580,10 +700,28 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
     $("sales-tin").value = r.tin || "";
     $("sales-atc").value = r.atc || "";
     $("sales-taxwithheld").value = r.tax_withheld ?? "";
+    $("sales-taxwithheld-pct").value = r.tax_withheld_rate != null ? String(r.tax_withheld_rate) : "";
     $("sales-bir").value = r.bir_receipt_no || "";
     $("sales-walkin").checked = !!r.is_walkin;
+    $("sales-zerorated").checked = !!r.zero_rated;
+    $("sales-vatexempt").checked = !!r.vat_exempt;
+    $("sales-discount").value = r.discount_amount || "";
+    $("sales-discount-details").value = r.discount_details || "";
     $("sales-description").value = r.description || "";
     $("sales-remarks").value = r.remarks || "";
+    $("sales-2307status").value = "";
+    $("sales-2307upload").value = "";
+    updateSalesFormForEntity();
+    updateSales2307FieldVisibility();
+    // Prefill "has the client issued the 2307" from the linked record, if
+    // any, so re-saving an edit doesn't silently wipe out a status someone
+    // already answered.
+    if (Number(r.tax_withheld || 0) > 0 && requireDb()) {
+      const { data: wh } = await sb.from("withholding_2307").select("client_issued").eq("sale_id", r.id).maybeSingle();
+      if (wh && wh.client_issued === true) $("sales-2307status").value = "yes";
+      else if (wh && wh.client_issued === false) $("sales-2307status").value = "no";
+      updateSales2307FieldVisibility();
+    }
     $("sales-form-title").textContent = "Edit sale";
     $("sales-cancel-edit").style.display = "inline-block";
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1229,6 +1367,114 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
   }
 
   /* =====================================================================
+     PETTY CASH VOUCHERS (liaison/messenger reimbursements)
+     ===================================================================== */
+  function initPettyCashForm() {
+    $("pettycash-date").value = todayISO();
+    $("pettycash-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!requireDb()) return;
+      const id = $("pettycash-id").value;
+      const payload = {
+        business_entity: $("pettycash-entity").value,
+        trx_date: $("pettycash-date").value,
+        staff_name: $("pettycash-staff").value.trim(),
+        amount: Number($("pettycash-amount").value || 0),
+        particulars: $("pettycash-particulars").value.trim() || null,
+        remarks: $("pettycash-remarks").value.trim() || null,
+      };
+      let error;
+      if (id) ({ error } = await sb.from("petty_cash_vouchers").update(payload).eq("id", id));
+      else ({ error } = await sb.from("petty_cash_vouchers").insert(payload));
+      if (error) return toast(error.message, true);
+      toast(id ? "Voucher updated" : "Voucher saved");
+      resetPettyCashForm();
+      loadPettyCash();
+    });
+    $("pettycash-cancel-edit").addEventListener("click", resetPettyCashForm);
+    $("pettycash-f-apply").addEventListener("click", loadPettyCash);
+    $("pettycash-f-status").addEventListener("change", loadPettyCash);
+  }
+  function resetPettyCashForm() {
+    $("pettycash-form").reset();
+    $("pettycash-id").value = "";
+    $("pettycash-date").value = todayISO();
+    $("pettycash-form-title").textContent = "Log a petty cash voucher";
+    $("pettycash-cancel-edit").style.display = "none";
+  }
+  async function loadPettyCash() {
+    if (!requireDb()) return;
+    const status = $("pettycash-f-status").value;
+    let q = sb.from("petty_cash_vouchers").select("*").order("trx_date", { ascending: false });
+    if (status) q = q.eq("status", status);
+    const { data, error } = await q.limit(500);
+    if (error) return toast(error.message, true);
+    const rows = data || [];
+    const tb = $("pettycash-table").querySelector("tbody");
+    tb.innerHTML = rows.length
+      ? rows.map((r) => `<tr>
+          <td>${escapeHtml(entityLabel(r.business_entity))}</td><td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.staff_name)}</td>
+          <td class="num">₱ ${fmtMoney(r.amount)}</td><td>${escapeHtml(r.particulars || "")}</td>
+          <td>${r.status === "reimbursed" ? statusBadge("FULLY PAID") : statusBadge("UNPAID")}</td>
+          <td>${r.reimbursed_date ? fmtDate(r.reimbursed_date) : ""}</td>
+          <td class="row-actions">
+            ${r.status === "pending" ? `<button class="btn small accent" data-reimburse="${r.id}">Mark reimbursed</button>` : ""}
+            <button class="btn small" data-edit-pc="${r.id}">Edit</button>
+            <button class="btn small danger" data-del-pc="${r.id}">Del</button>
+          </td>
+        </tr>`).join("")
+      : `<tr class="empty-row"><td colspan="8">No petty cash vouchers logged yet</td></tr>`;
+    tb.querySelectorAll("[data-edit-pc]").forEach((btn) =>
+      btn.addEventListener("click", () => editPettyCash(rows.find((r) => String(r.id) === btn.dataset.editPc)))
+    );
+    tb.querySelectorAll("[data-del-pc]").forEach((btn) =>
+      btn.addEventListener("click", () => deleteRow("petty_cash_vouchers", btn.dataset.delPc, loadPettyCash))
+    );
+    tb.querySelectorAll("[data-reimburse]").forEach((btn) =>
+      btn.addEventListener("click", () => reimbursePettyCash(rows.find((r) => String(r.id) === btn.dataset.reimburse)))
+    );
+  }
+  function editPettyCash(r) {
+    if (!r) return;
+    $("pettycash-id").value = r.id;
+    $("pettycash-entity").value = r.business_entity || "SOLE PROPRIETORSHIP";
+    $("pettycash-date").value = r.trx_date;
+    $("pettycash-staff").value = r.staff_name || "";
+    $("pettycash-amount").value = r.amount;
+    $("pettycash-particulars").value = r.particulars || "";
+    $("pettycash-remarks").value = r.remarks || "";
+    $("pettycash-form-title").textContent = "Edit petty cash voucher";
+    $("pettycash-cancel-edit").style.display = "inline-block";
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  // Marking a voucher reimbursed is the moment it actually becomes a
+  // company cash outflow -- create the matching expense row dated today
+  // (the reimbursement day), not the day the liaison originally spent it.
+  async function reimbursePettyCash(r) {
+    if (!r) return;
+    if (!confirm(`Mark ₱${fmtMoney(r.amount)} to ${r.staff_name} as reimbursed today, and create the matching expense entry?`)) return;
+    const today = todayISO();
+    const { data: expRow, error: expErr } = await sb.from("expenses").insert({
+      trx_date: today,
+      business_scope: "LIC PRINTING SHOP",
+      business_entity: r.business_entity,
+      tax_type: "NOT BIR RECEIPT",
+      business_name: `PETTY CASH — ${r.staff_name}`,
+      amount: r.amount,
+      category: "PETTY CASH REIMBURSEMENT",
+      particulars: r.particulars || null,
+      remarks: `Reimbursement for voucher logged ${fmtDate(r.trx_date)}`,
+    }).select("id").single();
+    if (expErr) return toast(expErr.message, true);
+    const { error } = await sb.from("petty_cash_vouchers").update({
+      status: "reimbursed", reimbursed_date: today, expense_id: expRow.id,
+    }).eq("id", r.id);
+    if (error) return toast(error.message, true);
+    toast("Voucher marked reimbursed — expense entry created");
+    loadPettyCash();
+  }
+
+  /* =====================================================================
      RECEIVABLES
      ===================================================================== */
   let receivablesWired = false;
@@ -1305,11 +1551,22 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
       loadBills();
     });
     $("bills-period").addEventListener("change", loadBills);
+    $("bills-f-apply").addEventListener("click", loadBills);
+    $("bills-f-search").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); loadBills(); }
+    });
+    $("bills-f-clear").addEventListener("click", () => {
+      $("bills-f-search").value = "";
+      loadBills();
+    });
   }
   async function loadBills() {
     if (!requireDb()) return;
     const period = $("bills-period").value || monthISO();
-    const { data: billers, error } = await sb.from("billers").select("*").eq("active", true).order("name");
+    const search = $("bills-f-search").value.trim();
+    let billerQuery = sb.from("billers").select("*").eq("active", true).order("name");
+    if (search) billerQuery = billerQuery.ilike("name", `%${search}%`);
+    const { data: billers, error } = await billerQuery;
     if (error) return toast(error.message, true);
     const { data: payments } = await sb.from("bill_payments").select("*").eq("period", period);
     const byBiller = {};
@@ -1359,54 +1616,11 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
   /* =====================================================================
      ISSUED INVOICES (compliance)
      ===================================================================== */
+  // The manual "log an issued invoice" form was removed (item 8) -- this
+  // register is now fed only by the auto-sync from Daily Sales (a row
+  // appears exactly when a BIR receipt no. is entered there), plus the
+  // pre-existing historical rows carried over from the Declarations sheet.
   function initInvoicesForm() {
-    $("invoices-month").value = monthISO();
-    $("invoices-date").value = todayISO();
-    function updateInvoicesPreview() {
-      const gross = Number($("invoices-gross").value || 0);
-      if (gross > 0) {
-        const { net, vat } = computeNetVat(gross, $("invoices-entity").value);
-        $("invoices-net").placeholder = net.toFixed(2);
-        $("invoices-vat").placeholder = vat.toFixed(2);
-      }
-    }
-    $("invoices-gross").addEventListener("input", updateInvoicesPreview);
-    $("invoices-entity").addEventListener("change", updateInvoicesPreview);
-    $("invoices-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      if (!requireDb()) return;
-      const gross = Number($("invoices-gross").value || 0);
-      const auto = computeNetVat(gross, $("invoices-entity").value);
-      const net = $("invoices-net").value ? Number($("invoices-net").value) : auto.net;
-      const vat = $("invoices-vat").value ? Number($("invoices-vat").value) : auto.vat;
-      const wtax = Number($("invoices-wtax").value || 0);
-      const id = $("invoices-id").value;
-      const payload = {
-        month_declared: $("invoices-month").value + "-01",
-        invoice_date: $("invoices-date").value || null,
-        invoice_no: $("invoices-invoiceno").value.trim(),
-        tin: $("invoices-tin").value.trim() || null,
-        customer_name: $("invoices-customer").value.trim(),
-        business_entity: $("invoices-entity").value || null,
-        gross_sales: gross,
-        net_sales: net,
-        vat: vat,
-        ewt_tax_rate: $("invoices-ewtrate").value ? Number($("invoices-ewtrate").value) : null,
-        withholding_tax: wtax,
-        total_due: gross - wtax,
-        with_2307: $("invoices-with2307").checked,
-        cancelled: $("invoices-cancelled").checked,
-        remarks: $("invoices-remarks").value.trim() || null,
-      };
-      let error;
-      if (id) ({ error } = await sb.from("issued_invoices").update(payload).eq("id", id));
-      else ({ error } = await sb.from("issued_invoices").insert(payload));
-      if (error) return toast(error.message, true);
-      toast(id ? "Invoice updated" : "Invoice saved");
-      resetInvoicesForm();
-      loadInvoices();
-    });
-    $("invoices-cancel-edit").addEventListener("click", resetInvoicesForm);
     $("invoices-f-apply").addEventListener("click", loadInvoices);
     $("invoices-f-search").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); loadInvoices(); }
@@ -1429,14 +1643,39 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
         { label: "Withholding Tax", key: "withholding_tax" }, { label: "With 2307", key: "with_2307" },
       ]);
     });
+    $("invoices-export-slsp").addEventListener("click", async () => {
+      if (!requireDb()) return;
+      const rows = (await fetchInvoicesRows()).filter((r) => !r.cancelled);
+      exportSlsRelief(rows);
+    });
   }
-  function resetInvoicesForm() {
-    $("invoices-form").reset();
-    $("invoices-id").value = "";
-    $("invoices-month").value = monthISO();
-    $("invoices-date").value = todayISO();
-    $("invoices-form-title").textContent = "Log an issued invoice";
-    $("invoices-cancel-edit").style.display = "none";
+  // Standard BIR RELIEF/SLSP-style column layout for a Summary List of
+  // Sales. This matches the well-known public RELIEF column set; BIR's own
+  // Data Entry Module (DEM) may expect a specific .dat layout for direct
+  // upload -- that exact fixed-format spec isn't something to guess at, so
+  // it's not included here. Ask 5JS's usual DEM version for that layout and
+  // this can be added as a companion export once confirmed.
+  // Only Sole Prop rows go on a VAT SLS -- Corp is Non-VAT and isn't part
+  // of a VAT filing. A row with ₱0 VAT is bucketed as Exempt/Zero-rated
+  // (this register doesn't keep the two separate at the invoice level, only
+  // on the Daily Sales row itself for entries made after this feature).
+  function exportSlsRelief(rows) {
+    const data = rows
+      .filter((r) => r.business_entity === "SOLE PROPRIETORSHIP")
+      .map((r) => {
+        const vat = Number(r.vat || 0);
+        return {
+          "TIN": r.tin || "", "Registered Name": r.customer_name || "", "Address": "",
+          "Exempt / Zero-Rated Sales": vat === 0 ? Number(r.gross_sales || 0) : 0,
+          "Taxable Net Sales": vat > 0 ? Number(r.net_sales || 0) : 0,
+          "Output Tax": vat,
+          "Gross Sales": Number(r.gross_sales || 0),
+        };
+      });
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "SLS");
+    XLSX.writeFile(wb, "sales_report_SLS_relief.xlsx");
   }
   async function fetchInvoicesRows() {
     let q = sb.from("issued_invoices").select("*").order("month_declared", { ascending: false });
@@ -1460,38 +1699,13 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
           <td class="num">₱ ${fmtMoney(r.net_sales)}</td><td class="num">₱ ${fmtMoney(r.vat)}</td>
           <td class="num">₱ ${fmtMoney(r.withholding_tax)}</td><td>${r.with_2307 ? statusBadge("FULLY PAID") : statusBadge("N/A")}</td>
           <td class="row-actions">
-            <button class="btn small" data-edit-inv="${r.id}">Edit</button>
-            <button class="btn small danger" data-del-inv="${r.id}">Del</button>
+            ${r.sale_id ? '<span class="hint">edit via Daily Sales</span>' : `<button class="btn small danger" data-del-inv="${r.id}">Del</button>`}
           </td>
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="11">No invoices match these filters</td></tr>`;
-    tb.querySelectorAll("[data-edit-inv]").forEach((btn) =>
-      btn.addEventListener("click", () => editInvoice(rows.find((r) => String(r.id) === btn.dataset.editInv)))
-    );
     tb.querySelectorAll("[data-del-inv]").forEach((btn) =>
       btn.addEventListener("click", () => deleteRow("issued_invoices", btn.dataset.delInv, loadInvoices))
     );
-  }
-  function editInvoice(r) {
-    if (!r) return;
-    $("invoices-id").value = r.id;
-    $("invoices-month").value = (r.month_declared || "").slice(0, 7);
-    $("invoices-date").value = r.invoice_date || "";
-    $("invoices-invoiceno").value = r.invoice_no || "";
-    $("invoices-tin").value = r.tin || "";
-    $("invoices-customer").value = r.customer_name || "";
-    $("invoices-entity").value = r.business_entity || "";
-    $("invoices-gross").value = r.gross_sales;
-    $("invoices-net").value = r.net_sales ?? "";
-    $("invoices-vat").value = r.vat ?? "";
-    $("invoices-ewtrate").value = r.ewt_tax_rate ?? "";
-    $("invoices-wtax").value = r.withholding_tax ?? 0;
-    $("invoices-with2307").checked = !!r.with_2307;
-    $("invoices-cancelled").checked = !!r.cancelled;
-    $("invoices-remarks").value = r.remarks || "";
-    $("invoices-form-title").textContent = "Edit invoice";
-    $("invoices-cancel-edit").style.display = "inline-block";
-    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   /* =====================================================================
@@ -1504,6 +1718,7 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
     $("expreport-to").value = todayISO();
     $("expreport-apply").addEventListener("click", loadExpensesReport);
     $("expreport-entity").addEventListener("change", loadExpensesReport);
+    $("expreport-category").addEventListener("change", loadExpensesReport);
     ["expreport-from", "expreport-to"].forEach((id) => $(id).addEventListener("change", loadExpensesReport));
     $("expreport-search").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); loadExpensesReport(); }
@@ -1523,6 +1738,37 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
         { label: "Mode", key: "mode_of_payment" }, { label: "ATC", key: "atc" }, { label: "Tax Withheld", key: "tax_withheld" },
       ]);
     });
+    $("expreport-export-slp").addEventListener("click", () => {
+      if (!lastExpReportRows.length) return toast("Nothing to export yet — run the report first", true);
+      exportSlpRelief(lastExpReportRows);
+    });
+  }
+  // Standard BIR RELIEF-style Summary List of Purchases columns. Same DAT-
+  // format caveat as the Sales export above -- this is the Excel/.xlsx
+  // layout, not BIR's DEM upload format.
+  function exportSlpRelief(rows) {
+    const data = rows
+      .filter((r) => r.tax_type === "VAT" && (r.tin || "").trim())
+      .map((r) => ({
+        "TIN": r.tin, "Registered Name": r.business_name || "", "Address": "",
+        "Amount of Purchases": Number(r.amount || 0),
+        "Input Tax": Number(r.amount || 0) - Number(r.amount || 0) / 1.12,
+        "Creditable Withholding Tax": Number(r.tax_withheld || 0),
+      }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "SLP");
+    XLSX.writeFile(wb, "expenses_report_SLP_relief.xlsx");
+  }
+  // Category filter (item 9): "VAT, with TIN" / "With withholding tax" /
+  // "Non-VAT" / "Others" (exempt, no BIR receipt, or anything else).
+  function matchesExpReportCategory(r, cat) {
+    if (!cat) return true;
+    if (cat === "vat_tin") return r.tax_type === "VAT" && !!(r.tin || "").trim();
+    if (cat === "withholding") return Number(r.tax_withheld || 0) > 0;
+    if (cat === "nonvat") return r.tax_type === "NVAT";
+    if (cat === "others") return r.tax_type === "EXEMPT" || r.tax_type === "NOT BIR RECEIPT" || !r.tax_type;
+    return true;
   }
   async function loadExpensesReport() {
     if (!requireDb()) return;
@@ -1532,13 +1778,14 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
     const to = $("expreport-to").value;
     const entity = $("expreport-entity").value;
     const search = $("expreport-search").value.trim();
+    const category = $("expreport-category").value;
 
     let q = sb.from("expenses").select("*").gte("trx_date", from).lte("trx_date", to).order("trx_date", { ascending: false });
     if (entity) q = q.eq("business_entity", entity);
     if (search) q = q.ilike("business_name", `%${search}%`);
     const { data, error } = await q.limit(2000);
     if (error) return toast(error.message, true);
-    const rows = data || [];
+    const rows = (data || []).filter((r) => matchesExpReportCategory(r, category));
     lastExpReportRows = rows;
 
     const total = rows.reduce((a, r) => a + Number(r.amount || 0), 0);
@@ -1656,6 +1903,12 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
   function directionBadge(d) {
     return d === "issued" ? '<span class="badge warn">Issued</span>' : '<span class="badge good">Received</span>';
   }
+  function clientIssuedBadge(r) {
+    if (r.direction !== "received") return "";
+    if (r.client_issued === true) return '<span class="badge good">Issued by client</span>';
+    if (r.client_issued === false) return '<span class="badge warn">Pending from client</span>';
+    return '<span class="badge neutral">Not asked yet</span>';
+  }
   async function loadWithholding() {
     if (!requireDb()) return;
     const rows = await fetchWithholdingRows();
@@ -1667,13 +1920,21 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
           <td>${escapeHtml(r.payee_name)}</td><td>${escapeHtml(r.atc || "")}</td>
           <td class="num">₱ ${fmtMoney(r.income_payment)}</td><td class="num">₱ ${fmtMoney(r.tax_withheld)}</td>
           <td>${r.issued ? statusBadge("FULLY PAID") : statusBadge("N/A")}</td>
+          <td>
+            ${clientIssuedBadge(r)}
+            ${r.direction === "received" ? `
+              ${r.certificate_file_path ? `<button class="btn small ghost" data-view-cert="${r.id}">View file</button>` : ""}
+              <button class="btn small ghost" data-mark-issued="${r.id}">Mark issued</button>
+              <button class="btn small ghost" data-mark-pending="${r.id}">Mark pending</button>
+            ` : ""}
+          </td>
           <td class="row-actions">
             ${r.direction === "issued" ? `<button class="btn small accent" data-pdf-wh="${r.id}">Download 2307</button>` : ""}
             <button class="btn small" data-edit-wh="${r.id}">Edit</button>
             <button class="btn small danger" data-del-wh="${r.id}">Del</button>
           </td>
         </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="10">No 2307s match these filters</td></tr>`;
+      : `<tr class="empty-row"><td colspan="11">No 2307s match these filters</td></tr>`;
     tb.querySelectorAll("[data-edit-wh]").forEach((btn) =>
       btn.addEventListener("click", () => editWithholding(rows.find((r) => String(r.id) === btn.dataset.editWh)))
     );
@@ -1694,6 +1955,24 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
           periodDate: r.month || (r.year ? `${r.year}-01-01` : null),
           invoiceRef: r.invoice_ref,
         });
+      })
+    );
+    tb.querySelectorAll("[data-mark-issued],[data-mark-pending]").forEach((btn) => {
+      const id = btn.dataset.markIssued || btn.dataset.markPending;
+      btn.addEventListener("click", async () => {
+        const { error } = await sb.from("withholding_2307").update({ client_issued: !!btn.dataset.markIssued }).eq("id", id);
+        if (error) return toast(error.message, true);
+        toast("2307 status updated");
+        loadWithholding();
+      });
+    });
+    tb.querySelectorAll("[data-view-cert]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        const r = rows.find((row) => String(row.id) === btn.dataset.viewCert);
+        if (!r || !r.certificate_file_path) return;
+        const { data, error } = await sb.storage.from("attachments").createSignedUrl(r.certificate_file_path, 300);
+        if (error) return toast("Couldn't open the file: " + error.message, true);
+        window.open(data.signedUrl, "_blank");
       })
     );
   }
@@ -1724,6 +2003,7 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
     $("opsreport-from").value = todayISO();
     $("opsreport-to").value = todayISO();
     $("opsreport-apply").addEventListener("click", loadOpsReport);
+    ["opsreport-from", "opsreport-to", "opsreport-entity"].forEach((id) => $(id).addEventListener("change", loadOpsReport));
     $("opsreport-today").addEventListener("click", () => {
       $("opsreport-from").value = todayISO();
       $("opsreport-to").value = todayISO();
@@ -1746,17 +2026,21 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
     const to = $("opsreport-to").value;
     const entity = $("opsreport-entity").value;
 
-    let salesQuery = sb.from("sales").select("trx_date,total_amount,amount_received,balance,mode_of_payment,reference_person,business_entity").gte("trx_date", from).lte("trx_date", to);
+    let salesQuery = sb.from("sales").select("id,trx_date,tradename,total_amount,amount_received,balance,mode_of_payment,reference_person,business_entity,is_walkin,invoice_no,bir_receipt_no").gte("trx_date", from).lte("trx_date", to);
     if (entity) salesQuery = salesQuery.eq("business_entity", entity);
     let expQuery = sb.from("expenses").select("trx_date,amount,mode_of_payment,category,business_name,business_entity").gte("trx_date", from).lte("trx_date", to);
     if (entity) expQuery = expQuery.eq("business_entity", entity);
+    let commQuery = sb.from("staff_commissions").select("*").gte("trx_date", from).lte("trx_date", to).order("trx_date", { ascending: false });
+    if (entity) commQuery = commQuery.eq("business_entity", entity);
 
-    const [{ data: sales, error: sErr }, { data: exp, error: eErr }] = await Promise.all([
+    const [{ data: sales, error: sErr }, { data: exp, error: eErr }, { data: commissions, error: cErr }] = await Promise.all([
       salesQuery,
       expQuery,
+      commQuery,
     ]);
     if (sErr) return toast(sErr.message, true);
     if (eErr) return toast(eErr.message, true);
+    if (cErr) console.warn("staff_commissions load failed", cErr.message);
 
     const sum = (rows, key) => (rows || []).reduce((a, r) => a + Number(r[key] || 0), 0);
     const totalSales = sum(sales, "total_amount");
@@ -1773,6 +2057,41 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
       card("Total expenses (period)", fmtMoney(totalExpenses), "bad"),
       card("Net cash", fmtMoney(netCash), netCash >= 0 ? "good" : "bad"),
     ].join("");
+
+    // ---- by entity (only shown when "Combined" is selected — item 5) ----
+    const entityPanel = $("opsreport-entity-panel");
+    if (!entity) {
+      entityPanel.style.display = "";
+      const byEntity = {};
+      ["SOLE PROPRIETORSHIP", "CORPORATION"].forEach((e) => (byEntity[e] = { sales: 0, received: 0, exp: 0 }));
+      (sales || []).forEach((r) => {
+        const e = r.business_entity || "SOLE PROPRIETORSHIP";
+        byEntity[e] = byEntity[e] || { sales: 0, received: 0, exp: 0 };
+        byEntity[e].sales += Number(r.total_amount || 0);
+        byEntity[e].received += Number(r.amount_received || 0);
+      });
+      (exp || []).forEach((r) => {
+        const e = r.business_entity || "SOLE PROPRIETORSHIP";
+        byEntity[e] = byEntity[e] || { sales: 0, received: 0, exp: 0 };
+        byEntity[e].exp += Number(r.amount || 0);
+      });
+      const etb = $("opsreport-entity-table").querySelector("tbody");
+      etb.innerHTML = Object.keys(byEntity).map((e) => `<tr>
+          <td>${escapeHtml(fullEntityLabel(e))}</td><td class="num">₱ ${fmtMoney(byEntity[e].sales)}</td>
+          <td class="num">₱ ${fmtMoney(byEntity[e].received)}</td><td class="num">₱ ${fmtMoney(byEntity[e].exp)}</td>
+        </tr>`).join("");
+    } else {
+      entityPanel.style.display = "none";
+    }
+
+    // ---- with vs without BIR receipt (item 14) ----
+    const withReceipt = (sales || []).filter((r) => (r.bir_receipt_no || "").trim());
+    const withoutReceipt = (sales || []).filter((r) => !(r.bir_receipt_no || "").trim());
+    const birTb = $("opsreport-bir-table").querySelector("tbody");
+    birTb.innerHTML = `
+      <tr><td>With BIR receipt no.</td><td class="num">${withReceipt.length}</td><td class="num">₱ ${fmtMoney(sum(withReceipt, "total_amount"))}</td></tr>
+      <tr><td>Without BIR receipt no.</td><td class="num">${withoutReceipt.length}</td><td class="num">₱ ${fmtMoney(sum(withoutReceipt, "total_amount"))}</td></tr>
+      <tr><td><strong>TOTAL</strong></td><td class="num"><strong>${(sales || []).length}</strong></td><td class="num"><strong>₱ ${fmtMoney(totalSales)}</strong></td></tr>`;
 
     // ---- breakdown by mode of payment (for closing the register) ----
     const modes = {};
@@ -1827,10 +2146,11 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
         </tr>`
       : `<tr class="empty-row"><td colspan="4">No expenses in this period</td></tr>`;
 
-    // ---- staff performance ----
+    // ---- staff performance (item 11: walk-in sales labeled as such, not
+    // just "(unassigned)") ----
     const staff = {};
     (sales || []).forEach((r) => {
-      const name = r.reference_person || "(unassigned)";
+      const name = r.reference_person || (r.is_walkin ? "Walk-in" : "(unassigned)");
       staff[name] = staff[name] || { count: 0, total: 0, received: 0, balance: 0 };
       staff[name].count += 1;
       staff[name].total += Number(r.total_amount || 0);
@@ -1853,12 +2173,81 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
             <td class="num"><strong>₱ ${fmtMoney(staffNames.reduce((a, n) => a + staff[n].balance, 0))}</strong></td>
           </tr>`
       : `<tr class="empty-row"><td colspan="5">No sales in this period</td></tr>`;
+
+    // ---- commissions pending approval (item 16) ----
+    const commTb = $("opsreport-commission-table").querySelector("tbody");
+    const commRows = commissions || [];
+    commTb.innerHTML = commRows.length
+      ? commRows.map((c) => `<tr>
+          <td>${fmtDate(c.trx_date)}</td><td>${escapeHtml(c.staff_name)}</td>
+          <td class="num">₱ ${fmtMoney(c.sale_total)}</td><td class="num">${(Number(c.commission_rate) * 100).toFixed(0)}%</td>
+          <td class="num">₱ ${fmtMoney(c.commission_amount)}</td>
+          <td>${c.status === "approved" ? statusBadge("FULLY PAID") : statusBadge("UNPAID")}${c.needs_review ? ' <span class="badge warn">changed since approval</span>' : ""}</td>
+          <td class="row-actions">
+            ${currentRole === "admin" && c.status !== "approved" ? `<button class="btn small accent" data-approve-comm="${c.id}">Approve</button>` : ""}
+          </td>
+        </tr>`).join("")
+      : `<tr class="empty-row"><td colspan="7">No fully-paid sales with a staff assigned in this period</td></tr>`;
+    commTb.querySelectorAll("[data-approve-comm]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        const { data: { user } } = await sb.auth.getUser();
+        const { error } = await sb.from("staff_commissions").update({
+          status: "approved", approved_at: new Date().toISOString(), approved_by: user?.email || null, needs_review: false,
+        }).eq("id", btn.dataset.approveComm);
+        if (error) return toast(error.message, true);
+        toast("Commission approved");
+        loadOpsReport();
+      })
+    );
+
+    // ---- sales for the period, consolidating repeat payments against the
+    // same Xero invoice no. into one line (item 2 + item 17) ----
+    const byInvoice = {};
+    const noInvoice = [];
+    (sales || []).forEach((r) => {
+      const key = (r.invoice_no || "").trim();
+      if (!key) { noInvoice.push(r); return; }
+      if (!byInvoice[key]) {
+        byInvoice[key] = { ...r, modes: new Set([r.mode_of_payment || "(not specified)"]) };
+      } else {
+        const g = byInvoice[key];
+        g.total_amount = Number(g.total_amount || 0) + Number(r.total_amount || 0);
+        g.amount_received = Number(g.amount_received || 0) + Number(r.amount_received || 0);
+        g.balance = Number(g.balance || 0) + Number(r.balance || 0);
+        g.modes.add(r.mode_of_payment || "(not specified)");
+        if (r.bir_receipt_no) g.bir_receipt_no = g.bir_receipt_no || r.bir_receipt_no;
+      }
+    });
+    const salesDetailRows = [
+      ...Object.values(byInvoice).map((g) => ({ ...g, modeLabel: Array.from(g.modes).join(" + ") })),
+      ...noInvoice.map((r) => ({ ...r, modeLabel: r.mode_of_payment || "(not specified)" })),
+    ].sort((a, b) => (a.trx_date || "").localeCompare(b.trx_date || ""));
+    const sdTb = $("opsreport-salesdetail-table").querySelector("tbody");
+    sdTb.innerHTML = salesDetailRows.length
+      ? salesDetailRows.map((r) => `<tr>
+          <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.tradename || "")}</td>
+          <td>${escapeHtml(r.reference_person || (r.is_walkin ? "Walk-in" : ""))}</td><td>${escapeHtml(r.invoice_no || "")}</td>
+          <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.amount_received)}</td>
+          <td class="num">₱ ${fmtMoney(r.balance)}</td><td>${escapeHtml(r.modeLabel)}</td>
+          <td>${(r.bir_receipt_no || "").trim() ? statusBadge("FULLY PAID") : statusBadge("N/A")}</td>
+        </tr>`).join("")
+      : `<tr class="empty-row"><td colspan="9">No sales in this period</td></tr>`;
+
+    // ---- expenses for the period (item 2 / earlier "expenses for the day" request) ----
+    const edTb = $("opsreport-expdetail-table").querySelector("tbody");
+    const expDetailRows = [...(exp || [])].sort((a, b) => (a.trx_date || "").localeCompare(b.trx_date || ""));
+    edTb.innerHTML = expDetailRows.length
+      ? expDetailRows.map((r) => `<tr>
+          <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.business_name || "")}</td>
+          <td>${escapeHtml(r.category || "")}</td><td class="num">₱ ${fmtMoney(r.amount)}</td><td>${escapeHtml(r.mode_of_payment || "")}</td>
+        </tr>`).join("")
+      : `<tr class="empty-row"><td colspan="5">No expenses in this period</td></tr>`;
   }
 
   /* =====================================================================
-     staff (manage who shows up in the staff dropdown)
+     STAFF (manage who shows up in the Staff dropdown)
      ===================================================================== */
-  function initstaffForm() {
+  function initStaffForm() {
     $("staff-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!requireDb()) return;
@@ -1866,13 +2255,13 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
       if (!name) return;
       const { error } = await sb.from("staff").insert({ name });
       if (error) return toast(error.message, true);
-      toast("staff added");
+      toast("Staff added");
       $("staff-form").reset();
-      loadstaff();
+      loadStaff();
       refreshDatalists();
     });
   }
-  async function loadstaff() {
+  async function loadStaff() {
     if (!requireDb()) return;
     const { data: rows, error } = await sb.from("staff").select("*").order("name");
     if (error) return toast(error.message, true);
@@ -1890,17 +2279,17 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
     tb.querySelectorAll("[data-toggle-staff]").forEach((btn) =>
       btn.addEventListener("click", async () => {
         if (!requireDb()) return;
-        const id = btn.dataset.togglestaff;
+        const id = btn.dataset.toggleStaff;
         const nowActive = btn.dataset.active !== "true";
         const { error } = await sb.from("staff").update({ active: nowActive }).eq("id", id);
         if (error) return toast(error.message, true);
-        toast(nowActive ? "staff reactivated" : "staff deactivated");
-        loadstaff();
+        toast(nowActive ? "Staff reactivated" : "Staff deactivated");
+        loadStaff();
         refreshDatalists();
       })
     );
     tb.querySelectorAll("[data-del-staff]").forEach((btn) =>
-      btn.addEventListener("click", () => deleteRow("staff", btn.dataset.delstaff, () => { loadstaff(); refreshDatalists(); }))
+      btn.addEventListener("click", () => deleteRow("staff", btn.dataset.delStaff, () => { loadStaff(); refreshDatalists(); }))
     );
   }
 
@@ -1992,6 +2381,22 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
   /* =====================================================================
      REPORTS
      ===================================================================== */
+  // "Filed" vs "Pending this quarter" (item 12): a month's VAT belongs to a
+  // BIR quarter (Q1 Jan-Mar, Q2 Apr-Jun, Q3 Jul-Sep, Q4 Oct-Dec). Once the
+  // CURRENT quarter has moved past that month's quarter, treat it as
+  // already filed/closed; the quarter we're currently in is still open /
+  // pending filing. This is a display label only -- it doesn't change what
+  // gets exported or what's editable.
+  function quarterFilingStatus(monthStr) {
+    const [y, m] = monthStr.slice(0, 7).split("-").map(Number);
+    const rowQ = Math.ceil(m / 3);
+    const now = new Date();
+    const curY = now.getFullYear();
+    const curQ = Math.ceil((now.getMonth() + 1) / 3);
+    if (y < curY || (y === curY && rowQ < curQ)) return { label: "Filed", cls: "good" };
+    if (y === curY && rowQ === curQ) return { label: `Pending Q${curQ} ${curY} filing`, cls: "warn" };
+    return { label: "Not yet due", cls: "neutral" };
+  }
   let lastSummaryRows = [];
   let reportsWired = false;
   async function loadReports() {
@@ -2040,15 +2445,17 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
     tb.innerHTML = rows.length
       ? rows.map((r) => {
           const net = Number(r.net_sales || 0) - Number(r.total_expenses || 0);
+          const fs = quarterFilingStatus(r.month);
           return `<tr>
             <td>${fmtMonth(r.month.slice(0, 7))}</td><td class="num">₱ ${fmtMoney(r.gross_sales)}</td>
             <td class="num">₱ ${fmtMoney(r.net_sales)}</td><td class="num">₱ ${fmtMoney(r.vat_on_sales)}</td>
             <td class="num">₱ ${fmtMoney(r.withholding_tax_on_sales)}</td><td class="num">₱ ${fmtMoney(r.vat_expenses)}</td>
             <td class="num">₱ ${fmtMoney(r.non_vat_expenses)}</td><td class="num">₱ ${fmtMoney(r.total_expenses)}</td>
             <td class="num">₱ ${fmtMoney(net)}</td>
+            <td><span class="badge ${fs.cls}">${fs.label}</span></td>
           </tr>`;
         }).join("")
-      : `<tr class="empty-row"><td colspan="9">Log some issued invoices and expenses to see the summary</td></tr>`;
+      : `<tr class="empty-row"><td colspan="10">Log some issued invoices and expenses to see the summary</td></tr>`;
 
     let histQuery = sb.from("declarations_history").select("*").order("year", { ascending: false }).order("month", { ascending: false });
     const histYear = $("reports-hist-f-year").value.trim();
@@ -2073,6 +2480,7 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
       { label: "Month", key: "month" }, { label: "Gross Sales", key: "gross_sales" }, { label: "Net Sales", key: "net_sales" },
       { label: "VAT on Sales", key: "vat_on_sales" }, { label: "WTax on Sales", key: "withholding_tax_on_sales" },
       { label: "VAT Expenses", key: "vat_expenses" }, { label: "Non-VAT Expenses", key: "non_vat_expenses" }, { label: "Total Expenses", key: "total_expenses" },
+      { label: "Filing Status", get: (r) => quarterFilingStatus(r.month).label },
     ]);
   });
 
@@ -2081,6 +2489,7 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
      ===================================================================== */
   initSalesForm();
   initExpensesForm();
+  initPettyCashForm();
   initExpensesImport();
   initExpensesDedupe();
   initBillsForm();
@@ -2088,7 +2497,7 @@ document.getElementById("today-label").textContent = new Date().toLocaleDateStri
   initExpensesReportForm();
   initWithholdingForm();
   initOpsReportForm();
-  initstaffForm();
+  initStaffForm();
   initIncomeStatementForm();
   initAuthGate();
 })();

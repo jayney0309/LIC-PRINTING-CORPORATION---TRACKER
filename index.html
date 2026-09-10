@@ -42,6 +42,7 @@
       <button class="nav-btn" data-view="sales-corp"><span class="ic">&#9755;</span> Sales — Corp</button>
       <button class="nav-btn" data-view="expenses-sp"><span class="ic">&#9755;</span> Expenses — Sole Prop</button>
       <button class="nav-btn" data-view="expenses-corp"><span class="ic">&#9755;</span> Expenses — Corp</button>
+      <button class="nav-btn" data-view="pettycash"><span class="ic">&#9755;</span> Petty Cash</button>
       <button class="nav-btn" data-view="receivables"><span class="ic">&#9755;</span> Receivables</button>
       <button class="nav-btn" data-view="bills"><span class="ic">&#9755;</span> Bill Tracker</button>
       <button class="nav-btn" data-view="opsreport"><span class="ic">&#9755;</span> Report</button>
@@ -113,6 +114,7 @@
     <section id="view-sales" class="view">
       <p class="section-note">You're logging sales for <strong id="sales-entity-label"></strong>. To log a sale for the other entity, use its own page in the sidebar — this keeps the two from getting mixed up.</p>
       <p class="section-note">Enter a "Tax withheld" amount if the customer withheld EWT before paying you — a matching 2307 (Received) is created automatically in the 2307 Register, so you don't have to enter it twice.</p>
+      <p class="section-note" id="sales-vat-threshold-banner" style="display:none;"></p>
       <div class="panel">
         <div class="panel-head"><h2 id="sales-form-title">Log a sale</h2></div>
         <form id="sales-form" class="form-grid">
@@ -127,10 +129,36 @@
           <div class="field"><label>Mode of payment</label><input list="payment-modes" id="sales-mode" /></div>
           <div class="field"><label>Xero Invoice No.</label><input id="sales-invoice" placeholder="INV-..." /></div>
           <div class="field"><label>Customer TIN</label><input id="sales-tin" placeholder="000-000-000-000" /></div>
-          <div class="field"><label>ATC</label><input id="sales-atc" placeholder="WC160..." /></div>
-          <div class="field"><label>Tax withheld</label><input type="number" step="0.01" min="0" id="sales-taxwithheld" placeholder="0.00" /></div>
+          <div class="field"><label>Tax withheld %</label>
+            <select id="sales-taxwithheld-pct">
+              <option value="">None</option>
+              <option value="0.01">1%</option>
+              <option value="0.02">2%</option>
+              <option value="0.05">5%</option>
+              <option value="0.10">10%</option>
+            </select>
+          </div>
+          <div class="field"><label>Tax withheld (₱)</label><input type="number" step="0.01" min="0" id="sales-taxwithheld" placeholder="0.00" /></div>
+          <div class="field"><label>ATC</label><input id="sales-atc" placeholder="auto-suggested from %" /></div>
+          <div class="field" id="sales-2307status-field" style="display:none;">
+            <label>Has the client issued the 2307?</label>
+            <select id="sales-2307status">
+              <option value="">Not sure yet / ask later</option>
+              <option value="yes">Yes — client already issued it</option>
+              <option value="no">No — not issued yet</option>
+            </select>
+          </div>
+          <div class="field" id="sales-2307upload-field" style="display:none;">
+            <label>Upload client's 2307 (optional)</label>
+            <input type="file" id="sales-2307upload" accept=".pdf,.jpg,.jpeg,.png" />
+          </div>
           <div class="field"><label>BIR receipt no.</label><input id="sales-bir" /></div>
           <div class="field checkbox-field"><input type="checkbox" id="sales-walkin" /><label>Walk-in customer</label></div>
+          <div class="field" id="sales-zerorated-field"><div class="checkbox-field"><input type="checkbox" id="sales-zerorated" /><label>Zero-rated sale</label></div></div>
+          <div class="field" id="sales-vatexempt-field"><div class="checkbox-field"><input type="checkbox" id="sales-vatexempt" /><label>VAT-exempt sale</label></div></div>
+          <div class="field" id="sales-vat-preview-field"><label>VAT (auto)</label><input id="sales-vat-preview" disabled placeholder="₱0.00" /></div>
+          <div class="field"><label>Discount</label><input type="number" step="0.01" min="0" id="sales-discount" placeholder="0.00" /></div>
+          <div class="field wide"><label>Discount details</label><input id="sales-discount-details" placeholder="e.g. Senior citizen / PWD, ID no..." /></div>
           <div class="field wide"><label>Description / job</label><input id="sales-description" /></div>
           <div class="field wide"><label>Remarks</label><input id="sales-remarks" placeholder="FP / DP / balance notes..." /></div>
           <div class="form-actions wide">
@@ -318,6 +346,53 @@
       </div>
     </section>
 
+    <!-- ======================= PETTY CASH VOUCHERS ======================= -->
+    <section id="view-pettycash" class="view">
+      <p class="section-note">For liaison/messenger reimbursements: the liaison spends their own cash today, and the company reimburses them later — that's not the same as a normal expense on the day it happens. Log the voucher here when they spend it, then mark it "Reimbursed" once the company actually pays them back; that automatically creates the matching expense entry (dated the reimbursement day) so the books stay accurate without re-typing it.</p>
+      <div class="panel">
+        <div class="panel-head"><h2 id="pettycash-form-title">Log a petty cash voucher</h2></div>
+        <form id="pettycash-form" class="form-grid">
+          <input type="hidden" id="pettycash-id" />
+          <div class="field"><label>Entity</label>
+            <select id="pettycash-entity">
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship</option>
+              <option value="CORPORATION">Corporation</option>
+            </select>
+          </div>
+          <div class="field"><label>Date spent</label><input type="date" id="pettycash-date" required /></div>
+          <div class="field"><label>Staff / liaison</label><input list="staff-list" id="pettycash-staff" required placeholder="Who advanced the cash" /></div>
+          <div class="field"><label>Amount</label><input type="number" step="0.01" min="0" id="pettycash-amount" required /></div>
+          <div class="field wide"><label>Particulars</label><input id="pettycash-particulars" placeholder="What it was for" /></div>
+          <div class="field wide"><label>Remarks</label><input id="pettycash-remarks" /></div>
+          <div class="form-actions wide">
+            <button type="submit" class="btn primary">Save voucher</button>
+            <button type="button" class="btn ghost" id="pettycash-cancel-edit" style="display:none;">Cancel edit</button>
+            <span class="hint" id="pettycash-form-msg"></span>
+          </div>
+        </form>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Vouchers</h2></div>
+        <div class="filters">
+          <div class="field"><label>Status</label>
+            <select id="pettycash-f-status">
+              <option value="">All</option>
+              <option value="pending">Pending reimbursement</option>
+              <option value="reimbursed">Reimbursed</option>
+            </select>
+          </div>
+          <button class="btn small accent" id="pettycash-f-apply">Search</button>
+        </div>
+        <div class="table-wrap"><table class="data" id="pettycash-table">
+          <thead><tr>
+            <th>Entity</th><th>Date spent</th><th>Staff</th><th class="num">Amount</th><th>Particulars</th><th>Status</th><th>Reimbursed</th><th>Actions</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+    </section>
+
     <!-- ======================= RECEIVABLES ======================= -->
     <section id="view-receivables" class="view">
       <p class="section-note">Every sale with a balance still owing, oldest first. Record a payment to chip away at the balance without re-typing the whole sale.</p>
@@ -368,6 +443,11 @@
 
       <div class="panel">
         <div class="panel-head"><h2>This period's bills</h2></div>
+        <div class="filters">
+          <div class="field wide"><label>Search</label><input id="bills-f-search" placeholder="Biller name..." /></div>
+          <button class="btn small accent" id="bills-f-apply">Search</button>
+          <button class="btn small ghost" id="bills-f-clear">Clear</button>
+        </div>
         <div class="table-wrap"><table class="data" id="bills-table">
           <thead><tr>
             <th>Biller</th><th>Due date</th><th class="num">Total</th><th class="num">Paid</th><th>Date paid</th><th>Mode</th><th>Status</th><th>Actions</th>
@@ -425,14 +505,79 @@
         <div class="form-actions"><button class="btn small accent" id="opsreport-expcat-export">Export CSV</button></div>
       </div>
 
+      <div class="panel" id="opsreport-entity-panel" style="display:none;">
+        <div class="panel-head">
+          <h2>By entity</h2>
+          <span class="hint">Combined report selected — Sole Prop vs Corporation breakdown</span>
+        </div>
+        <div class="table-wrap"><table class="data" id="opsreport-entity-table">
+          <thead><tr>
+            <th>Entity</th><th class="num">Total sales</th><th class="num">Received</th><th class="num">Expenses</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Sales — with vs without BIR receipt</h2>
+          <span class="hint">How much of the period's sales are officially receipted vs not yet</span>
+        </div>
+        <div class="table-wrap"><table class="data" id="opsreport-bir-table">
+          <thead><tr>
+            <th>Group</th><th class="num"># Transactions</th><th class="num">Total</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+
       <div class="panel">
         <div class="panel-head">
           <h2>Staff performance</h2>
-          <span class="hint">Totals per staff member for the selected period</span>
+          <span class="hint">Totals per staff member for the selected period — walk-in sales (no staff assigned) are grouped as "Walk-in"</span>
         </div>
         <div class="table-wrap"><table class="data" id="opsreport-staff-table">
           <thead><tr>
             <th>Staff</th><th class="num"># Transactions</th><th class="num">Total sales</th><th class="num">Amount received</th><th class="num">Outstanding</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Commissions pending approval</h2>
+          <span class="hint">10% of each fully-paid sale, auto-computed — still needs an admin to approve before it counts as final</span>
+        </div>
+        <div class="table-wrap"><table class="data" id="opsreport-commission-table">
+          <thead><tr>
+            <th>Date</th><th>Staff</th><th class="num">Sale total</th><th class="num">Rate</th><th class="num">Commission</th><th>Status</th><th>Actions</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Sales for the period</h2>
+          <span class="hint">Same Xero invoice no. paid across more than one transaction (e.g. part cash, part GCash) is consolidated into a single line here</span>
+        </div>
+        <div class="table-wrap"><table class="data" id="opsreport-salesdetail-table">
+          <thead><tr>
+            <th>Date</th><th>Tradename</th><th>Staff</th><th>Xero Invoice</th><th class="num">Total</th>
+            <th class="num">Received</th><th class="num">Balance</th><th>Mode(s)</th><th>BIR receipt</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Expenses for the period</h2>
+        </div>
+        <div class="table-wrap"><table class="data" id="opsreport-expdetail-table">
+          <thead><tr>
+            <th>Date</th><th>Business</th><th>Category</th><th class="num">Amount</th><th>Mode</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
@@ -466,38 +611,7 @@
 
     <!-- ======================= SALES REPORT ======================= -->
     <section id="view-invoices" class="view">
-      <p class="section-note">The officially numbered Sales Invoices declared to BIR — this feeds the VAT summary in Reports and the Income Statement. Rows sync in automatically from Daily Sales whenever a BIR receipt no. is entered there, so you don't have to re-type them; older entries carried over from the Declarations sheet stay here as history. Use the form below only for adjustments or entries with no matching Daily Sales row. Net sales/VAT are computed by entity — LIC Printing Shop (Sole Proprietorship) is VAT-registered (Net = Gross ÷ 1.12); LIC Printing Corporation is Non-VAT, so Gross = Net and VAT shows ₱0.</p>
-      <div class="panel">
-        <div class="panel-head"><h2 id="invoices-form-title">Log an issued invoice</h2></div>
-        <form id="invoices-form" class="form-grid">
-          <input type="hidden" id="invoices-id" />
-          <div class="field"><label>Month declared</label><input type="month" id="invoices-month" required /></div>
-          <div class="field"><label>Invoice date</label><input type="date" id="invoices-date" /></div>
-          <div class="field"><label>Invoice no.</label><input id="invoices-invoiceno" required /></div>
-          <div class="field"><label>TIN</label><input id="invoices-tin" /></div>
-          <div class="field wide"><label>Customer name</label><input id="invoices-customer" required /></div>
-          <div class="field"><label>Business entity</label>
-            <select id="invoices-entity">
-              <option value="">(not set)</option>
-              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship</option>
-              <option value="CORPORATION">Corporation</option>
-            </select>
-          </div>
-          <div class="field"><label>Gross sales (VAT incl.)</label><input type="number" step="0.01" id="invoices-gross" required /></div>
-          <div class="field"><label>Net sales</label><input type="number" step="0.01" id="invoices-net" placeholder="auto (VAT-based on entity)" /></div>
-          <div class="field"><label>VAT</label><input type="number" step="0.01" id="invoices-vat" placeholder="auto" /></div>
-          <div class="field"><label>EWT rate</label><input type="number" step="0.0001" id="invoices-ewtrate" placeholder="e.g. 0.02" /></div>
-          <div class="field"><label>Withholding tax</label><input type="number" step="0.01" id="invoices-wtax" value="0" /></div>
-          <div class="field checkbox-field"><input type="checkbox" id="invoices-with2307" /><label>Covered by 2307</label></div>
-          <div class="field checkbox-field"><input type="checkbox" id="invoices-cancelled" /><label>Cancelled</label></div>
-          <div class="field wide"><label>Remarks</label><input id="invoices-remarks" /></div>
-          <div class="form-actions wide">
-            <button type="submit" class="btn primary">Save invoice</button>
-            <button type="button" class="btn ghost" id="invoices-cancel-edit" style="display:none;">Cancel edit</button>
-            <span class="hint" id="invoices-form-msg"></span>
-          </div>
-        </form>
-      </div>
+      <p class="section-note">The officially numbered Sales Invoices declared to BIR — this feeds the VAT summary in Reports and the Income Statement. Rows sync in automatically from Daily Sales whenever a BIR receipt no. is entered there, so this register only ever holds transactions that actually have a BIR receipt no. — there's no manual "log an invoice" form anymore. Older entries carried over from the Declarations sheet stay here as history (and can still be deleted if a cleanup is needed). Net sales/VAT are computed by entity — LIC Printing Shop (Sole Proprietorship) is VAT-registered (Net = Gross ÷ 1.12); LIC Printing Corporation is Non-VAT, so Gross = Net and VAT shows ₱0.</p>
       <div class="panel">
         <div class="panel-head"><h2>Sales report register</h2></div>
         <div class="filters">
@@ -513,6 +627,7 @@
           <button class="btn small accent" id="invoices-f-apply">Search</button>
           <button class="btn small ghost" id="invoices-f-clear">Clear</button>
           <button class="btn small accent" id="invoices-export">Export CSV</button>
+          <button class="btn small accent" id="invoices-export-slsp">Export SLS (VAT Relief/SLSP-ready .xlsx)</button>
         </div>
         <div class="table-wrap"><table class="data" id="invoices-table">
           <thead><tr>
@@ -539,9 +654,19 @@
               <option value="CORPORATION">Corporation only</option>
             </select>
           </div>
+          <div class="field"><label>Category</label>
+            <select id="expreport-category">
+              <option value="">All</option>
+              <option value="vat_tin">VAT, with TIN</option>
+              <option value="withholding">With withholding tax</option>
+              <option value="nonvat">Non-VAT</option>
+              <option value="others">Others (exempt / no BIR receipt)</option>
+            </select>
+          </div>
           <button class="btn small accent" id="expreport-apply">Search</button>
           <button class="btn small ghost" id="expreport-mtd">This month</button>
           <button class="btn small accent" id="expreport-export">Export CSV</button>
+          <button class="btn small accent" id="expreport-export-slp">Export SLP (VAT Relief-ready .xlsx)</button>
         </div>
       </div>
 
@@ -619,7 +744,7 @@
         <div class="table-wrap"><table class="data" id="withholding-table">
           <thead><tr>
             <th>Direction</th><th>Year</th><th>Qtr</th><th>Month</th><th>Payee</th><th>ATC</th>
-            <th class="num">Income</th><th class="num">Tax withheld</th><th>Issued</th><th>Actions</th>
+            <th class="num">Income</th><th class="num">Tax withheld</th><th>Issued</th><th>Client's 2307</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
@@ -643,7 +768,7 @@
           <thead><tr>
             <th>Month</th><th class="num">Gross sales</th><th class="num">Net sales</th><th class="num">VAT on sales</th>
             <th class="num">WTax on sales</th><th class="num">VAT expenses</th><th class="num">Non-VAT expenses</th>
-            <th class="num">Total expenses</th><th class="num">Est. net</th>
+            <th class="num">Total expenses</th><th class="num">Est. net</th><th>Filing status</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
