@@ -1520,8 +1520,6 @@
       loadPettyCash();
     });
     $("pettycash-cancel-edit").addEventListener("click", resetPettyCashForm);
-    $("pettycash-f-apply").addEventListener("click", loadPettyCash);
-    $("pettycash-f-status").addEventListener("change", loadPettyCash);
   }
   function resetPettyCashForm() {
     $("pettycash-form").reset();
@@ -1532,34 +1530,25 @@
   }
   async function loadPettyCash() {
     if (!requireDb()) return;
-    const status = $("pettycash-f-status").value;
-    let q = sb.from("petty_cash_vouchers").select("*").order("trx_date", { ascending: false });
-    if (status) q = q.eq("status", status);
-    const { data, error } = await q.limit(500);
+    const { data, error } = await sb.from("petty_cash_vouchers").select("*").order("trx_date", { ascending: false }).limit(500);
     if (error) return toast(error.message, true);
     const rows = data || [];
     const tb = $("pettycash-table").querySelector("tbody");
     tb.innerHTML = rows.length
       ? rows.map((r) => `<tr>
           <td>${escapeHtml(entityLabel(r.business_entity))}</td><td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.staff_name)}</td>
-          <td class="num">₱ ${fmtMoney(r.amount)}</td><td>${escapeHtml(r.particulars || "")}</td>
-          <td>${r.status === "reimbursed" ? statusBadge("FULLY PAID") : statusBadge("UNPAID")}</td>
-          <td>${r.reimbursed_date ? fmtDate(r.reimbursed_date) : ""}</td>
+          <td class="num">₱ ${fmtMoney(r.amount)}</td><td>${escapeHtml(r.particulars || "")}</td><td>${escapeHtml(r.remarks || "")}</td>
           <td class="row-actions">
-            ${r.status === "pending" ? `<button class="btn small accent" data-reimburse="${r.id}">Mark reimbursed</button>` : ""}
             <button class="btn small" data-edit-pc="${r.id}">Edit</button>
             <button class="btn small danger" data-del-pc="${r.id}">Del</button>
           </td>
         </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="8">No petty cash vouchers logged yet</td></tr>`;
+      : `<tr class="empty-row"><td colspan="7">No petty cash vouchers logged yet</td></tr>`;
     tb.querySelectorAll("[data-edit-pc]").forEach((btn) =>
       btn.addEventListener("click", () => editPettyCash(rows.find((r) => String(r.id) === btn.dataset.editPc)))
     );
     tb.querySelectorAll("[data-del-pc]").forEach((btn) =>
       btn.addEventListener("click", () => deleteRow("petty_cash_vouchers", btn.dataset.delPc, loadPettyCash))
-    );
-    tb.querySelectorAll("[data-reimburse]").forEach((btn) =>
-      btn.addEventListener("click", () => reimbursePettyCash(rows.find((r) => String(r.id) === btn.dataset.reimburse)))
     );
   }
   function editPettyCash(r) {
@@ -1575,33 +1564,6 @@
     $("pettycash-cancel-edit").style.display = "inline-block";
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
-  // Marking a voucher reimbursed is the moment it actually becomes a
-  // company cash outflow -- create the matching expense row dated today
-  // (the reimbursement day), not the day the liaison originally spent it.
-  async function reimbursePettyCash(r) {
-    if (!r) return;
-    if (!confirm(`Mark ₱${fmtMoney(r.amount)} to ${r.staff_name} as reimbursed today, and create the matching expense entry?`)) return;
-    const today = todayISO();
-    const { data: expRow, error: expErr } = await sb.from("expenses").insert({
-      trx_date: today,
-      business_scope: "LIC PRINTING SHOP",
-      business_entity: r.business_entity,
-      tax_type: "NOT BIR RECEIPT",
-      business_name: `PETTY CASH — ${r.staff_name}`,
-      amount: r.amount,
-      category: "PETTY CASH REIMBURSEMENT",
-      particulars: r.particulars || null,
-      remarks: `Reimbursement for voucher logged ${fmtDate(r.trx_date)}`,
-    }).select("id").single();
-    if (expErr) return toast(expErr.message, true);
-    const { error } = await sb.from("petty_cash_vouchers").update({
-      status: "reimbursed", reimbursed_date: today, expense_id: expRow.id,
-    }).eq("id", r.id);
-    if (error) return toast(error.message, true);
-    toast("Voucher marked reimbursed — expense entry created");
-    loadPettyCash();
-  }
-
   /* =====================================================================
      RECEIVABLES
      ===================================================================== */

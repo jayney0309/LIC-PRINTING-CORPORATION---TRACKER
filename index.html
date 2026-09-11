@@ -364,7 +364,7 @@
 
     <!-- ======================= PETTY CASH VOUCHERS ======================= -->
     <section id="view-pettycash" class="view">
-      <p class="section-note">For liaison/messenger reimbursements: the liaison spends their own cash today, and the company reimburses them later — that's not the same as a normal expense on the day it happens. Log the voucher here when they spend it, then mark it "Reimbursed" once the company actually pays them back; that automatically creates the matching expense entry (dated the reimbursement day) so the books stay accurate without re-typing it.</p>
+      <p class="section-note">A log of cash advanced to a liaison/messenger — not an expense by itself. When the staff spends it, they submit the actual receipt and that gets entered as its own expense (with a real category, TIN, etc.) through the normal Daily Expenses form, separately. This list is a record of who's holding company cash and when it was issued — it's not counted in the Expenses Report or Income Statement.</p>
       <div class="panel">
         <div class="panel-head"><h2 id="pettycash-form-title">Log a petty cash voucher</h2></div>
         <form id="pettycash-form" class="form-grid">
@@ -375,8 +375,8 @@
               <option value="CORPORATION">Corporation</option>
             </select>
           </div>
-          <div class="field"><label>Date spent</label><input type="date" id="pettycash-date" required /></div>
-          <div class="field"><label>Staff / liaison</label><input list="staff-list" id="pettycash-staff" required placeholder="Who advanced the cash" /></div>
+          <div class="field"><label>Date issued</label><input type="date" id="pettycash-date" required /></div>
+          <div class="field"><label>Staff / liaison</label><input list="staff-list" id="pettycash-staff" required placeholder="Who received the cash" /></div>
           <div class="field"><label>Amount</label><input type="number" step="0.01" min="0" id="pettycash-amount" required /></div>
           <div class="field wide"><label>Particulars</label><input id="pettycash-particulars" placeholder="What it was for" /></div>
           <div class="field wide"><label>Remarks</label><input id="pettycash-remarks" /></div>
@@ -390,19 +390,9 @@
 
       <div class="panel">
         <div class="panel-head"><h2>Vouchers</h2></div>
-        <div class="filters">
-          <div class="field"><label>Status</label>
-            <select id="pettycash-f-status">
-              <option value="">All</option>
-              <option value="pending">Pending reimbursement</option>
-              <option value="reimbursed">Reimbursed</option>
-            </select>
-          </div>
-          <button class="btn small accent" id="pettycash-f-apply">Search</button>
-        </div>
         <div class="table-wrap"><table class="data" id="pettycash-table">
           <thead><tr>
-            <th>Entity</th><th>Date spent</th><th>Staff</th><th class="num">Amount</th><th>Particulars</th><th>Status</th><th>Reimbursed</th><th>Actions</th>
+            <th>Entity</th><th>Date issued</th><th>Staff</th><th class="num">Amount</th><th>Particulars</th><th>Remarks</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
