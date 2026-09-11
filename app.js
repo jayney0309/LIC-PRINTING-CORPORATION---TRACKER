@@ -3036,23 +3036,34 @@
   /* =====================================================================
      REPORTS
      ===================================================================== */
-  // "Filed" vs "Pending this quarter" (item 12): a month's VAT belongs to a
-  // BIR quarter (Q1 Jan-Mar, Q2 Apr-Jun, Q3 Jul-Sep, Q4 Oct-Dec). Once the
-  // CURRENT quarter has moved past that month's quarter, treat it as
-  // already filed/closed; the quarter we're currently in is still open /
-  // pending filing. This is a display label only -- it doesn't change what
-  // gets exported or what's editable.
-  function quarterFilingStatus(monthStr) {
+  // A month's VAT belongs to a BIR quarter (Q1 Jan-Mar, Q2 Apr-Jun, Q3
+  // Jul-Sep, Q4 Oct-Dec). "Filed" here means an admin actually closed that
+  // quarter for an entity in Audit & Integrity -> Filing periods (the
+  // period_closures table -- that's also what locks the period against
+  // further edits, so it's the real record of "this was filed with BIR",
+  // not a guess). Since this table isn't split by entity, a quarter only
+  // reads as fully "Filed" once BOTH entities are closed for it; closing
+  // just one shows as a partial so it's obvious one entity still needs it.
+  // If the quarter is already in the past and neither entity has been
+  // closed, that's flagged (not silently shown as "Filed").
+  function quarterFilingStatus(monthStr, closures) {
     const [y, m] = monthStr.slice(0, 7).split("-").map(Number);
     const rowQ = Math.ceil(m / 3);
+    const periodLabel = `${y}-Q${rowQ}`;
+    const closedEntities = new Set((closures || []).filter((c) => c.period_label === periodLabel).map((c) => c.business_entity));
+    const spClosed = closedEntities.has("SOLE PROPRIETORSHIP");
+    const corpClosed = closedEntities.has("CORPORATION");
+    if (spClosed && corpClosed) return { label: "Filed", cls: "good" };
+    if (spClosed || corpClosed) return { label: `Filed — ${spClosed ? "Sole Prop" : "Corp"} only`, cls: "warn" };
     const now = new Date();
     const curY = now.getFullYear();
     const curQ = Math.ceil((now.getMonth() + 1) / 3);
-    if (y < curY || (y === curY && rowQ < curQ)) return { label: "Filed", cls: "good" };
+    if (y < curY || (y === curY && rowQ < curQ)) return { label: "Not marked as filed", cls: "bad" };
     if (y === curY && rowQ === curQ) return { label: `Pending Q${curQ} ${curY} filing`, cls: "warn" };
     return { label: "Not yet due", cls: "neutral" };
   }
   let lastSummaryRows = [];
+  let lastClosuresForReports = [];
   let reportsWired = false;
   async function loadReports() {
     if (!requireDb()) return;
@@ -3079,9 +3090,10 @@
         loadReports();
       });
     }
-    const [{ data: sales }, { data: exp }] = await Promise.all([
+    const [{ data: sales }, { data: exp }, { data: closures }] = await Promise.all([
       sb.from("v_monthly_summary").select("*"),
       sb.from("v_monthly_expenses").select("*"),
+      sb.from("period_closures").select("business_entity,period_label"),
     ]);
     const byMonth = {};
     (sales || []).forEach((s) => (byMonth[s.month] = { ...byMonth[s.month], ...s }));
@@ -3095,22 +3107,24 @@
     if (summaryYear) rows = rows.filter((r) => r.month.slice(0, 4) === summaryYear);
     if (summarySearch) rows = rows.filter((r) => fmtMonth(r.month.slice(0, 7)).toLowerCase().includes(summarySearch) || r.month.includes(summarySearch));
     lastSummaryRows = rows;
+    lastClosuresForReports = closures || [];
 
     const tb = $("reports-summary-table").querySelector("tbody");
     tb.innerHTML = rows.length
       ? rows.map((r) => {
           const net = Number(r.net_sales || 0) - Number(r.total_expenses || 0);
-          const fs = quarterFilingStatus(r.month);
+          const fs = quarterFilingStatus(r.month, closures);
           return `<tr>
             <td>${fmtMonth(r.month.slice(0, 7))}</td><td class="num">₱ ${fmtMoney(r.gross_sales)}</td>
             <td class="num">₱ ${fmtMoney(r.net_sales)}</td><td class="num">₱ ${fmtMoney(r.vat_on_sales)}</td>
             <td class="num">₱ ${fmtMoney(r.withholding_tax_on_sales)}</td><td class="num">₱ ${fmtMoney(r.vat_expenses)}</td>
             <td class="num">₱ ${fmtMoney(r.non_vat_expenses)}</td><td class="num">₱ ${fmtMoney(r.total_expenses)}</td>
             <td class="num">₱ ${fmtMoney(net)}</td>
-            <td><span class="badge ${fs.cls}">${fs.label}</span></td>
+            <td><button type="button" class="badge ${fs.cls}" style="border:none;cursor:pointer;" data-goto-filing="1" title="Manage in Audit & Integrity → Filing periods">${fs.label}</button></td>
           </tr>`;
         }).join("")
       : `<tr class="empty-row"><td colspan="10">Log some issued invoices and expenses to see the summary</td></tr>`;
+    tb.querySelectorAll("[data-goto-filing]").forEach((btn) => btn.addEventListener("click", () => showView("audit")));
 
     let histQuery = sb.from("declarations_history").select("*").order("year", { ascending: false }).order("month", { ascending: false });
     const histYear = $("reports-hist-f-year").value.trim();
@@ -3135,7 +3149,7 @@
       { label: "Month", key: "month" }, { label: "Gross Sales", key: "gross_sales" }, { label: "Net Sales", key: "net_sales" },
       { label: "VAT on Sales", key: "vat_on_sales" }, { label: "WTax on Sales", key: "withholding_tax_on_sales" },
       { label: "VAT Expenses", key: "vat_expenses" }, { label: "Non-VAT Expenses", key: "non_vat_expenses" }, { label: "Total Expenses", key: "total_expenses" },
-      { label: "Filing Status", get: (r) => quarterFilingStatus(r.month).label },
+      { label: "Filing Status", get: (r) => quarterFilingStatus(r.month, lastClosuresForReports).label },
     ]);
   });
 
