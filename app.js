@@ -41,6 +41,14 @@
     if (isNaN(dt)) return d;
     return dt.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
   }
+  // For a full timestamp (audit log entries) -- fmtDate() above is only for
+  // plain "YYYY-MM"/"YYYY-MM-DD" dates and would mangle a timestamptz value.
+  function fmtDateTime(d) {
+    if (!d) return "";
+    const dt = new Date(d);
+    if (isNaN(dt)) return d;
+    return dt.toLocaleString("en-PH", { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  }
   function fmtMonth(d) {
     if (!d) return "";
     const dt = new Date(d.length === 7 ? d + "-01" : d);
@@ -110,7 +118,7 @@
   // ---------------------------------------------------------------- auth gate
   let bootedAfterAuth = false;
 
-  const ADMIN_ONLY_VIEWS = ["invoices", "expensesreport", "withholding", "reports", "incomestatement"];
+  const ADMIN_ONLY_VIEWS = ["invoices", "expensesreport", "withholding", "reports", "incomestatement", "audit"];
   let currentRole = "staff";
 
   // Daily Sales and Daily Expenses each have two locked-entity nav entries
@@ -134,12 +142,26 @@
   // services vs. rent vs. professional fee), which this app has no way to
   // know automatically, so the field stays editable — treat this as a
   // best-guess default to speed up entry, not a compliance guarantee.
+  // BIR's ATC code for EWT usually carries the payee's own type in the
+  // prefix -- WI... when the income recipient (here, LIC) is an individual,
+  // WC... when it's a corporation. Since that recipient type IS the
+  // business entity picked on this page (Sole Prop = individual, Corp =
+  // corporation), the two rates 5JS confirmed both variants for are
+  // auto-selected by currentSalesEntity below instead of hard-coding one.
   const ATC_BY_RATE = {
-    "0.01": "WC160", // 1% — goods, top withholding agent
-    "0.02": "WC158", // 2% — services, top withholding agent
+    "0.01": { WI: "WI158", WC: "WC158" },  // 1% — goods
+    "0.02": { WI: "WI160", WC: "WC160" },  // 2% — services (WI120/WC120 also used for this rate depending on the exact
+                                            // nature of the income payment -- double-check against BIR's ATC table and
+                                            // override the ATC field by hand if 120 applies instead of 160)
     "0.05": "WC100", // 5% — rental / certain brokers & agents
     "0.10": "WI010", // 10% — professional/talent fees (individual)
   };
+  function atcForRate(pct) {
+    const entry = ATC_BY_RATE[pct];
+    if (!entry) return null;
+    if (typeof entry === "string") return entry;
+    return currentSalesEntity === "SOLE PROPRIETORSHIP" ? entry.WI : entry.WC;
+  }
 
   // VAT threshold for monitoring Corp (Non-VAT) cumulative sales. BIR's
   // current VAT registration threshold is ₱3,000,000 (Sec. 109(BB) NIRC, as
@@ -211,7 +233,7 @@
   }
 
   // ---------------------------------------------------------------- nav
-  const views = ["dashboard", "sales", "expenses", "pettycash", "receivables", "bills", "opsreport", "commission", "staff", "invoices", "expensesreport", "withholding", "reports", "incomestatement"];
+  const views = ["dashboard", "sales", "expenses", "pettycash", "receivables", "bills", "opsreport", "commission", "staff", "invoices", "expensesreport", "withholding", "reports", "incomestatement", "audit"];
   const titles = {
     dashboard: "Dashboard",
     "sales-sp": "Daily Sales — LIC Printing Shop", "sales-corp": "Daily Sales — LIC Printing Corporation",
@@ -219,6 +241,7 @@
     pettycash: "Petty Cash Vouchers",
     receivables: "Receivables", bills: "Bill Tracker", opsreport: "Daily Operations Report", commission: "Commission", staff: "Staff",
     invoices: "Sales Report", expensesreport: "Expenses Report", withholding: "2307 Register", reports: "Reports", incomestatement: "Income Statement",
+    audit: "Audit & Integrity",
   };
   const loaded = {};
   const loaders = {
@@ -228,6 +251,7 @@
     pettycash: loadPettyCash,
     receivables: loadReceivables, bills: loadBills, opsreport: loadOpsReport, commission: loadCommissions, staff: loadStaff,
     invoices: loadInvoices, expensesreport: loadExpensesReport, withholding: loadWithholding, reports: loadReports, incomestatement: loadIncomeStatement,
+    audit: loadAuditView,
   };
 
   function showView(name) {
@@ -243,6 +267,7 @@
         $("sales-entity-label").textContent = fullEntityLabel(currentSalesEntity);
         updateSalesFormForEntity();
         checkCorpVatThreshold();
+        loadCashCountForDate();
       } else {
         currentExpensesEntity = nav.entity;
         $("expenses-entity").value = currentExpensesEntity;
@@ -288,11 +313,11 @@
 
     const [{ data: todaySales }, { data: monthSales }, { data: todayExp }, { data: monthExp }, { data: receivables }, { data: recentSales }] =
       await Promise.all([
-        sb.from("sales").select("total_amount").eq("trx_date", today),
-        sb.from("sales").select("total_amount").gte("trx_date", monthStart),
-        sb.from("expenses").select("amount").eq("trx_date", today),
-        sb.from("expenses").select("amount").gte("trx_date", monthStart),
-        sb.from("sales").select("balance").neq("balance", 0),
+        sb.from("sales").select("total_amount").eq("trx_date", today).is("deleted_at", null),
+        sb.from("sales").select("total_amount").gte("trx_date", monthStart).is("deleted_at", null),
+        sb.from("expenses").select("amount").eq("trx_date", today).is("deleted_at", null),
+        sb.from("expenses").select("amount").gte("trx_date", monthStart).is("deleted_at", null),
+        sb.from("sales").select("balance").neq("balance", 0).is("deleted_at", null),
         sb.from("v_sales_status").select("*").order("trx_date", { ascending: false }).limit(10),
       ]);
 
@@ -345,8 +370,8 @@
     since.setDate(since.getDate() - 13);
     const sinceISO = since.toISOString().slice(0, 10);
     const [{ data: spSales }, { data: spExp }] = await Promise.all([
-      sb.from("sales").select("trx_date,total_amount").gte("trx_date", sinceISO),
-      sb.from("expenses").select("trx_date,amount").gte("trx_date", sinceISO),
+      sb.from("sales").select("trx_date,total_amount").gte("trx_date", sinceISO).is("deleted_at", null),
+      sb.from("expenses").select("trx_date,amount").gte("trx_date", sinceISO).is("deleted_at", null),
     ]);
     const days = [];
     for (let i = 0; i < 14; i++) {
@@ -390,12 +415,26 @@
     const { vat } = computeNetVat(gross, currentSalesEntity, exempt);
     $("sales-vat-preview").value = "₱ " + fmtMoney(vat) + ($("sales-zerorated").checked ? " (zero-rated)" : $("sales-vatexempt").checked ? " (exempt)" : "");
   }
+  // EWT is withheld on the NET-of-VAT amount for a VAT-registered sale --
+  // gross only doubles as the basis when there's no VAT to net out (Corp,
+  // since it's Non-VAT, or a Sole Prop sale that's zero-rated/VAT-exempt).
+  // computeNetVat() already returns net === gross in exactly those cases,
+  // so using its `net` as the withholding basis handles all three
+  // situations correctly without special-casing any of them here.
   function updateSalesTaxWithheldFromPct() {
     const pct = $("sales-taxwithheld-pct").value;
-    if (!pct) return;
+    const hint = $("sales-taxwithheld-basis-hint");
+    if (!pct) { if (hint) hint.textContent = ""; return; }
     const gross = Number($("sales-total").value || 0);
-    $("sales-taxwithheld").value = gross > 0 ? (gross * Number(pct)).toFixed(2) : "";
-    $("sales-atc").value = ATC_BY_RATE[pct] || $("sales-atc").value;
+    const exempt = $("sales-zerorated").checked || $("sales-vatexempt").checked;
+    const { net } = computeNetVat(gross, currentSalesEntity, exempt);
+    $("sales-taxwithheld").value = net > 0 ? (net * Number(pct)).toFixed(2) : "";
+    $("sales-atc").value = atcForRate(pct) || $("sales-atc").value;
+    if (hint) {
+      hint.textContent = currentSalesEntity === "SOLE PROPRIETORSHIP" && !exempt
+        ? `computed on net-of-VAT ₱${fmtMoney(net)}`
+        : "computed on gross (no VAT to net out)";
+    }
     updateSales2307FieldVisibility();
   }
   function updateSales2307FieldVisibility() {
@@ -411,7 +450,7 @@
     const banner = $("sales-vat-threshold-banner");
     if (currentSalesEntity !== "CORPORATION" || !sb) { banner.style.display = "none"; return; }
     const yearStart = new Date().getFullYear() + "-01-01";
-    const { data } = await sb.from("sales").select("total_amount").eq("business_entity", "CORPORATION").gte("trx_date", yearStart);
+    const { data } = await sb.from("sales").select("total_amount").eq("business_entity", "CORPORATION").gte("trx_date", yearStart).is("deleted_at", null);
     const ytd = (data || []).reduce((a, r) => a + Number(r.total_amount || 0), 0);
     if (ytd >= VAT_THRESHOLD) {
       banner.textContent = `⚠ LIC Printing Corporation's cumulative sales this year are ₱${fmtMoney(ytd)} — at or above the ₱${fmtMoney(VAT_THRESHOLD)} VAT threshold. This is a monitoring flag only (VAT is NOT auto-charged here) — please review VAT registration status with BIR.`;
@@ -444,10 +483,12 @@
     $("sales-zerorated").addEventListener("change", () => {
       if ($("sales-zerorated").checked) $("sales-vatexempt").checked = false;
       updateSalesVatPreview();
+      updateSalesTaxWithheldFromPct();
     });
     $("sales-vatexempt").addEventListener("change", () => {
       if ($("sales-vatexempt").checked) $("sales-zerorated").checked = false;
       updateSalesVatPreview();
+      updateSalesTaxWithheldFromPct();
     });
     $("sales-form").addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -671,7 +712,7 @@
       btn.addEventListener("click", () => editSale(rows.find((r) => String(r.id) === btn.dataset.editSale)))
     );
     tb.querySelectorAll("[data-del-sale]").forEach((btn) =>
-      btn.addEventListener("click", () => deleteRow("sales", btn.dataset.delSale, loadSales))
+      btn.addEventListener("click", () => softDeleteRow("sales", btn.dataset.delSale, loadSales))
     );
     tb.querySelectorAll("[data-toggle-payment]").forEach((btn) =>
       btn.addEventListener("click", async () => {
@@ -733,6 +774,89 @@
     if (error) return toast(error.message, true);
     toast("Deleted");
     reload();
+  }
+  // Sales and Expenses never get hard-deleted from the app -- the record
+  // still matters for tracking total revenue/spend even if it turns out to
+  // be a mistake or duplicate. This just stamps it as deleted (with who and
+  // why) so it drops off every normal list and report; it can still be
+  // found and restored from Audit & Integrity -> Trash.
+  async function softDeleteRow(table, id, reload) {
+    if (!requireDb()) return;
+    const reason = prompt("Why are you deleting this? (kept in the audit trail — e.g. \"duplicate entry\", \"encoding mistake\")");
+    if (reason === null) return; // cancelled
+    const { data: { user } } = await sb.auth.getUser();
+    const { error } = await sb.from(table).update({
+      deleted_at: new Date().toISOString(),
+      deleted_by: user?.email || null,
+      delete_reason: reason.trim() || "(no reason given)",
+    }).eq("id", id);
+    if (error) return toast(error.message, true);
+    toast("Moved to Trash (Audit & Integrity) — can be restored if needed");
+    reload();
+  }
+
+  /* =====================================================================
+     DAILY CASH COUNT (catches a sale that never got logged)
+     ===================================================================== */
+  function initCashCountForm() {
+    $("cashcount-date").value = todayISO();
+    $("cashcount-date").addEventListener("change", loadCashCountForDate);
+    $("cashcount-save").addEventListener("click", saveCashCount);
+  }
+  async function loadCashCountForDate() {
+    if (!sb) return;
+    const date = $("cashcount-date").value || todayISO();
+    const { data } = await sb.from("daily_cash_counts").select("*")
+      .eq("business_entity", currentSalesEntity).eq("count_date", date).maybeSingle();
+    $("cashcount-cash").value = data ? data.counted_cash : "";
+    $("cashcount-gcash").value = data ? data.counted_gcash : "";
+    $("cashcount-other").value = data ? data.counted_other : "";
+    $("cashcount-result").style.display = "none";
+  }
+  async function saveCashCount() {
+    if (!requireDb()) return;
+    const date = $("cashcount-date").value || todayISO();
+    const cash = Number($("cashcount-cash").value || 0);
+    const gcash = Number($("cashcount-gcash").value || 0);
+    const other = Number($("cashcount-other").value || 0);
+    const { data: { user } } = await sb.auth.getUser();
+    const { error } = await sb.from("daily_cash_counts").upsert({
+      business_entity: currentSalesEntity,
+      count_date: date,
+      counted_cash: cash,
+      counted_gcash: gcash,
+      counted_other: other,
+      counted_by: user?.email || null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "business_entity,count_date" });
+    if (error) return toast(error.message, true);
+
+    const { data: rows, error: qErr } = await sb.from("sales")
+      .select("amount_received,mode_of_payment")
+      .eq("business_entity", currentSalesEntity)
+      .eq("trx_date", date)
+      .is("deleted_at", null);
+    if (qErr) return toast(qErr.message, true);
+    let recCash = 0, recGcash = 0, recOther = 0;
+    (rows || []).forEach((r) => {
+      const mode = (r.mode_of_payment || "").trim().toUpperCase();
+      const amt = Number(r.amount_received || 0);
+      if (mode === "CASH") recCash += amt;
+      else if (mode === "GCASH") recGcash += amt;
+      else recOther += amt;
+    });
+    const bucket = (label, counted, recorded) => {
+      const diff = counted - recorded;
+      const ok = Math.abs(diff) < 0.01;
+      return `<div>${label}: counted ₱${fmtMoney(counted)} vs logged ₱${fmtMoney(recorded)} — ${
+        ok ? '<span class="badge good">matches</span>' : `<span class="badge bad">off by ₱${fmtMoney(Math.abs(diff))}${diff > 0 ? " (more counted than logged)" : " (less counted than logged)"}</span>`
+      }</div>`;
+    };
+    const anyMismatch = Math.abs(cash - recCash) >= 0.01 || Math.abs(gcash - recGcash) >= 0.01 || Math.abs(other - recOther) >= 0.01;
+    $("cashcount-result").innerHTML = bucket("Cash", cash, recCash) + bucket("GCash", gcash, recGcash) + bucket("Other", other, recOther) +
+      (anyMismatch ? '<p class="hint">A mismatch usually means a sale from this date wasn\'t logged yet, or was logged under a different payment mode — worth double-checking before closing out the day.</p>' : "");
+    $("cashcount-result").style.display = "block";
+    toast("Cash count saved");
   }
 
   /* =====================================================================
@@ -974,7 +1098,7 @@
     }
   }
   async function fetchExpensesRows() {
-    let q = sb.from("expenses").select("*").eq("business_entity", currentExpensesEntity).order("trx_date", { ascending: false });
+    let q = sb.from("expenses").select("*").eq("business_entity", currentExpensesEntity).is("deleted_at", null).order("trx_date", { ascending: false });
     const from = $("expenses-f-from").value, to = $("expenses-f-to").value, cat = $("expenses-f-category").value.trim(), search = $("expenses-f-search").value.trim();
     const withholding = $("expenses-f-withholding").value;
     if (from) q = q.gte("trx_date", from);
@@ -1010,7 +1134,7 @@
       btn.addEventListener("click", () => editExpense(rows.find((r) => String(r.id) === btn.dataset.editExp)))
     );
     tb.querySelectorAll("[data-del-exp]").forEach((btn) =>
-      btn.addEventListener("click", () => deleteRow("expenses", btn.dataset.delExp, loadExpenses))
+      btn.addEventListener("click", () => softDeleteRow("expenses", btn.dataset.delExp, loadExpenses))
     );
   }
   function editExpense(r) {
@@ -1304,6 +1428,7 @@
     const { data, error } = await sb
       .from("expenses")
       .select("id,trx_date,invoice_no,business_name,amount")
+      .is("deleted_at", null)
       .order("trx_date", { ascending: true })
       .order("id", { ascending: true })
       .limit(5000);
@@ -1356,8 +1481,11 @@
     const idsToDelete = [];
     checks.forEach((cb, i) => { if (cb.checked) idsToDelete.push(dedupeCandidates[i].id); });
     if (!idsToDelete.length) return toast("Nothing checked for deletion", true);
-    if (!confirm(`Delete ${idsToDelete.length} duplicate expense(s)? This can't be undone.`)) return;
-    const { error } = await sb.from("expenses").delete().in("id", idsToDelete);
+    if (!confirm(`Delete ${idsToDelete.length} duplicate expense(s)? They'll move to Trash (Audit & Integrity), not be erased.`)) return;
+    const { data: { user } } = await sb.auth.getUser();
+    const { error } = await sb.from("expenses").update({
+      deleted_at: new Date().toISOString(), deleted_by: user?.email || null, delete_reason: "duplicate (bulk cleanup)",
+    }).in("id", idsToDelete);
     if (error) return toast(error.message, true);
     toast(`Deleted ${idsToDelete.length} duplicate expense(s)`);
     dedupeCandidates = [];
@@ -1780,7 +1908,7 @@
     const search = $("expreport-search").value.trim();
     const category = $("expreport-category").value;
 
-    let q = sb.from("expenses").select("*").gte("trx_date", from).lte("trx_date", to).order("trx_date", { ascending: false });
+    let q = sb.from("expenses").select("*").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null).order("trx_date", { ascending: false });
     if (entity) q = q.eq("business_entity", entity);
     if (search) q = q.ilike("business_name", `%${search}%`);
     const { data, error } = await q.limit(2000);
@@ -2026,9 +2154,9 @@
     const to = $("opsreport-to").value;
     const entity = $("opsreport-entity").value;
 
-    let salesQuery = sb.from("sales").select("id,trx_date,tradename,total_amount,amount_received,balance,mode_of_payment,reference_person,business_entity,is_walkin,invoice_no,bir_receipt_no").gte("trx_date", from).lte("trx_date", to);
+    let salesQuery = sb.from("sales").select("id,trx_date,tradename,total_amount,amount_received,balance,mode_of_payment,reference_person,business_entity,is_walkin,invoice_no,bir_receipt_no").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null);
     if (entity) salesQuery = salesQuery.eq("business_entity", entity);
-    let expQuery = sb.from("expenses").select("trx_date,amount,mode_of_payment,category,business_name,business_entity").gte("trx_date", from).lte("trx_date", to);
+    let expQuery = sb.from("expenses").select("trx_date,amount,mode_of_payment,category,business_name,business_entity").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null);
     if (entity) expQuery = expQuery.eq("business_entity", entity);
 
     const [{ data: sales, error: sErr }, { data: exp, error: eErr }] = await Promise.all([
@@ -2379,7 +2507,7 @@
 
     let invQuery = sb.from("issued_invoices").select("gross_sales,net_sales,vat,cancelled,month_declared,business_entity").gte("month_declared", from).lte("month_declared", to);
     if (entity) invQuery = invQuery.eq("business_entity", entity);
-    let expQuery = sb.from("expenses").select("amount,category,business_entity").gte("trx_date", from).lte("trx_date", to);
+    let expQuery = sb.from("expenses").select("amount,category,business_entity").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null);
     if (entity) expQuery = expQuery.eq("business_entity", entity);
     const [{ data: inv, error: iErr }, { data: exp, error: eErr }] = await Promise.all([
       invQuery,
@@ -2536,6 +2664,142 @@
   });
 
   /* =====================================================================
+     AUDIT & INTEGRITY (filing-period locks, deleted-record trash, change log)
+     ===================================================================== */
+  function initAuditView() {
+    $("closure-year").value = new Date().getFullYear();
+    $("closure-close").addEventListener("click", closeQuarter);
+    $("audit-f-apply").addEventListener("click", loadAuditLog);
+    $("audit-f-clear").addEventListener("click", () => {
+      $("audit-f-table").value = "";
+      $("audit-f-action").value = "";
+      $("audit-f-search").value = "";
+      loadAuditLog();
+    });
+  }
+  async function loadAuditView() {
+    if (!requireDb()) return;
+    await Promise.all([loadClosures(), loadTrash(), loadAuditLog()]);
+  }
+  async function closeQuarter() {
+    if (!requireDb()) return;
+    const entity = $("closure-entity").value;
+    const q = Number($("closure-quarter").value);
+    const year = Number($("closure-year").value);
+    if (!year) return toast("Enter a year", true);
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const startMonth = (q - 1) * 3 + 1;
+    const endMonth = startMonth + 2;
+    const lastDay = new Date(year, endMonth, 0).getDate(); // local getter only -- no UTC conversion, so no timezone off-by-one
+    const periodLabel = `${year}-Q${q}`;
+    const periodStart = `${year}-${pad2(startMonth)}-01`;
+    const periodEnd = `${year}-${pad2(endMonth)}-${pad2(lastDay)}`;
+    if (!confirm(`Close ${periodLabel} for ${entityLabel(entity)}? After this, only an admin can edit or delete a sale/expense dated ${periodStart} to ${periodEnd}.`)) return;
+    const { data: { user } } = await sb.auth.getUser();
+    const { error } = await sb.from("period_closures").upsert({
+      business_entity: entity, period_label: periodLabel, period_start: periodStart, period_end: periodEnd,
+      closed_by: user?.email || null, closed_at: new Date().toISOString(), note: $("closure-note").value.trim() || null,
+    }, { onConflict: "business_entity,period_label" });
+    if (error) return toast(error.message, true);
+    toast(`${periodLabel} closed for ${entityLabel(entity)}`);
+    $("closure-note").value = "";
+    loadClosures();
+  }
+  async function loadClosures() {
+    const { data, error } = await sb.from("period_closures").select("*").order("period_start", { ascending: false }).limit(200);
+    if (error) return toast(error.message, true);
+    const tb = $("closures-table").querySelector("tbody");
+    tb.innerHTML = (data || []).length
+      ? data.map((c) => `<tr>
+          <td>${escapeHtml(entityLabel(c.business_entity))}</td><td>${escapeHtml(c.period_label)}</td>
+          <td>${escapeHtml(c.closed_by || "")}</td><td>${fmtDate(c.closed_at)}</td><td>${escapeHtml(c.note || "")}</td>
+          <td class="row-actions"><button class="btn small danger" data-reopen-period="${c.id}">Reopen</button></td>
+        </tr>`).join("")
+      : `<tr class="empty-row"><td colspan="6">No periods closed yet</td></tr>`;
+    tb.querySelectorAll("[data-reopen-period]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        if (!confirm("Reopen this period? Staff will be able to edit or delete records dated inside it again.")) return;
+        const { error: delErr } = await sb.from("period_closures").delete().eq("id", btn.dataset.reopenPeriod);
+        if (delErr) return toast(delErr.message, true);
+        toast("Period reopened");
+        loadClosures();
+      })
+    );
+  }
+  async function loadTrash() {
+    const [{ data: sales, error: sErr }, { data: exp, error: eErr }] = await Promise.all([
+      sb.from("sales").select("id,trx_date,tradename,total_amount,deleted_at,deleted_by,delete_reason").not("deleted_at", "is", null).order("deleted_at", { ascending: false }).limit(300),
+      sb.from("expenses").select("id,trx_date,business_name,amount,deleted_at,deleted_by,delete_reason").not("deleted_at", "is", null).order("deleted_at", { ascending: false }).limit(300),
+    ]);
+    if (sErr) return toast(sErr.message, true);
+    if (eErr) return toast(eErr.message, true);
+    const rows = [
+      ...(sales || []).map((r) => ({ type: "Sale", table: "sales", id: r.id, date: r.trx_date, desc: r.tradename, amount: r.total_amount, deleted_at: r.deleted_at, deleted_by: r.deleted_by, reason: r.delete_reason })),
+      ...(exp || []).map((r) => ({ type: "Expense", table: "expenses", id: r.id, date: r.trx_date, desc: r.business_name, amount: r.amount, deleted_at: r.deleted_at, deleted_by: r.deleted_by, reason: r.delete_reason })),
+    ].sort((a, b) => (b.deleted_at || "").localeCompare(a.deleted_at || ""));
+    const tb = $("trash-table").querySelector("tbody");
+    tb.innerHTML = rows.length
+      ? rows.map((r) => `<tr>
+          <td>${r.type}</td><td>${fmtDate(r.date)}</td><td>${escapeHtml(r.desc || "")}</td>
+          <td class="num">₱ ${fmtMoney(r.amount)}</td><td>${escapeHtml(r.deleted_by || "")}</td><td>${escapeHtml(r.reason || "")}</td>
+          <td class="row-actions"><button class="btn small accent" data-restore="${r.table}:${r.id}">Restore</button></td>
+        </tr>`).join("")
+      : `<tr class="empty-row"><td colspan="7">Trash is empty</td></tr>`;
+    tb.querySelectorAll("[data-restore]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        const [table, id] = btn.dataset.restore.split(":");
+        const { error } = await sb.from(table).update({ deleted_at: null, deleted_by: null, delete_reason: null }).eq("id", id);
+        if (error) return toast(error.message, true);
+        toast("Restored");
+        loadTrash();
+      })
+    );
+  }
+  async function loadAuditLog() {
+    const table = $("audit-f-table").value;
+    const action = $("audit-f-action").value;
+    const search = $("audit-f-search").value.trim();
+    let q = sb.from("audit_log").select("*").order("changed_at", { ascending: false }).limit(300);
+    if (table) q = q.eq("table_name", table);
+    if (action) q = q.eq("action", action);
+    if (search) q = q.ilike("changed_by", `%${search}%`);
+    const { data, error } = await q;
+    if (error) return toast(error.message, true);
+    const tb = $("audit-table").querySelector("tbody");
+    tb.innerHTML = (data || []).length
+      ? data.map((a) => {
+          const actionCls = a.action === "DELETE" ? "bad" : a.action === "INSERT" ? "good" : "warn";
+          return `<tr>
+            <td>${fmtDateTime(a.changed_at)}</td><td>${escapeHtml(a.table_name)}</td><td>${a.row_id ?? ""}</td>
+            <td><span class="badge ${actionCls}">${a.action}</span></td><td>${escapeHtml(a.changed_by || "")}</td>
+            <td>${escapeHtml(a.changed_by_role || "")}</td>
+            <td><button class="btn small ghost" data-audit-detail="${a.id}">View</button></td>
+          </tr>`;
+        }).join("")
+      : `<tr class="empty-row"><td colspan="7">No matching changes</td></tr>`;
+    tb.querySelectorAll("[data-audit-detail]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const row = data.find((a) => String(a.id) === btn.dataset.auditDetail);
+        if (!row) return;
+        const diff = summarizeAuditDiff(row.old_data, row.new_data);
+        alert(`${row.table_name} #${row.row_id} — ${row.action}\nBy ${row.changed_by} (${row.changed_by_role})\n${fmtDateTime(row.changed_at)}\n\n${diff}`);
+      })
+    );
+  }
+  // Show only the fields that actually changed, old -> new, instead of two
+  // full JSON blobs -- much faster to spot what actually happened.
+  function summarizeAuditDiff(oldData, newData) {
+    if (!oldData) return "New record:\n" + Object.entries(newData || {}).filter(([, v]) => v !== null && v !== "").map(([k, v]) => `  ${k}: ${v}`).join("\n");
+    if (!newData) return "Deleted record's last known values:\n" + Object.entries(oldData || {}).filter(([, v]) => v !== null && v !== "").map(([k, v]) => `  ${k}: ${v}`).join("\n");
+    const lines = [];
+    Object.keys(newData).forEach((k) => {
+      const before = oldData[k], after = newData[k];
+      if (JSON.stringify(before) !== JSON.stringify(after)) lines.push(`  ${k}: ${before ?? "(empty)"} -> ${after ?? "(empty)"}`);
+    });
+    return lines.length ? lines.join("\n") : "(no field-level changes detected)";
+  }
+
+  /* =====================================================================
      BOOT
      ===================================================================== */
   initSalesForm();
@@ -2551,5 +2815,7 @@
   initCommissionForm();
   initStaffForm();
   initIncomeStatementForm();
+  initCashCountForm();
+  initAuditView();
   initAuthGate();
 })();

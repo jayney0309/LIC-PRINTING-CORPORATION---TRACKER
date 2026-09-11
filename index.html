@@ -56,6 +56,7 @@
         <button class="nav-btn" data-view="withholding"><span class="ic">&#9755;</span> 2307 Register</button>
         <button class="nav-btn" data-view="reports"><span class="ic">&#9755;</span> Reports</button>
         <button class="nav-btn" data-view="incomestatement"><span class="ic">&#9755;</span> Income Statement</button>
+        <button class="nav-btn" data-view="audit"><span class="ic">&#9755;</span> Audit &amp; Integrity</button>
       </div>
     </nav>
 
@@ -117,6 +118,20 @@
       <p class="section-note">Enter a "Tax withheld" amount if the customer withheld EWT before paying you — a matching 2307 (Received) is created automatically in the 2307 Register, so you don't have to enter it twice.</p>
       <p class="section-note" id="sales-vat-threshold-banner" style="display:none;"></p>
       <div class="panel">
+        <div class="panel-head">
+          <h2>Daily cash count</h2>
+          <span class="hint">Count what's actually on hand at closing — this is what catches a sale that never got logged</span>
+        </div>
+        <div class="filters">
+          <div class="field"><label>Date</label><input type="date" id="cashcount-date" /></div>
+          <div class="field"><label>Cash counted</label><input type="number" step="0.01" id="cashcount-cash" placeholder="0.00" /></div>
+          <div class="field"><label>GCash counted</label><input type="number" step="0.01" id="cashcount-gcash" placeholder="0.00" /></div>
+          <div class="field"><label>Other (bank/card) counted</label><input type="number" step="0.01" id="cashcount-other" placeholder="0.00" /></div>
+          <button class="btn small accent" id="cashcount-save">Save &amp; Check</button>
+        </div>
+        <div id="cashcount-result" style="display:none;"></div>
+      </div>
+      <div class="panel">
         <div class="panel-head"><h2 id="sales-form-title">Log a sale</h2></div>
         <form id="sales-form" class="form-grid">
           <input type="hidden" id="sales-id" />
@@ -139,7 +154,7 @@
               <option value="0.10">10%</option>
             </select>
           </div>
-          <div class="field"><label>Tax withheld (₱)</label><input type="number" step="0.01" min="0" id="sales-taxwithheld" placeholder="0.00" /></div>
+          <div class="field"><label>Tax withheld (₱)</label><input type="number" step="0.01" min="0" id="sales-taxwithheld" placeholder="0.00" /><span class="hint" id="sales-taxwithheld-basis-hint"></span></div>
           <div class="field"><label>ATC</label><input id="sales-atc" placeholder="auto-suggested from %" /></div>
           <div class="field" id="sales-2307status-field" style="display:none;">
             <label>Has the client issued the 2307?</label>
@@ -854,6 +869,88 @@
           <tbody></tbody>
         </table></div>
         <div class="form-actions"><button class="btn small accent" id="incstmt-export">Export CSV</button></div>
+      </div>
+    </section>
+
+    <!-- ======================= AUDIT & INTEGRITY ======================= -->
+    <section id="view-audit" class="view">
+      <p class="section-note">Everything on this page is about trust in the numbers, not about the numbers themselves: who changed what, what's been closed out as filed, and anything that was deleted (nothing is ever truly gone — Delete on Sales/Expenses just moves a record here).</p>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Filing periods</h2>
+          <span class="hint">Close a quarter once it's actually been filed with BIR — after that, only an admin can still edit or delete a sale/expense dated inside it</span>
+        </div>
+        <div class="filters">
+          <div class="field"><label>Entity</label>
+            <select id="closure-entity">
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship</option>
+              <option value="CORPORATION">Corporation</option>
+            </select>
+          </div>
+          <div class="field"><label>Quarter</label>
+            <select id="closure-quarter">
+              <option value="1">Q1 (Jan–Mar)</option>
+              <option value="2">Q2 (Apr–Jun)</option>
+              <option value="3">Q3 (Jul–Sep)</option>
+              <option value="4">Q4 (Oct–Dec)</option>
+            </select>
+          </div>
+          <div class="field"><label>Year</label><input type="number" id="closure-year" placeholder="e.g. 2026" /></div>
+          <div class="field wide"><label>Note</label><input id="closure-note" placeholder="e.g. Filed 2550Q on..." /></div>
+          <button class="btn small accent" id="closure-close">Close this quarter</button>
+        </div>
+        <div class="table-wrap"><table class="data" id="closures-table">
+          <thead><tr><th>Entity</th><th>Period</th><th>Closed by</th><th>Closed on</th><th>Note</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Deleted records (Trash)</h2>
+          <span class="hint">Soft-deleted sales &amp; expenses — restore one if it was removed by mistake</span>
+        </div>
+        <div class="table-wrap"><table class="data" id="trash-table">
+          <thead><tr><th>Type</th><th>Date</th><th>Description</th><th class="num">Amount</th><th>Deleted by</th><th>Reason</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Change history</h2>
+          <span class="hint">Every insert, edit, and delete on sales, expenses, invoices, 2307s, commissions and petty cash — automatic, can't be edited or turned off</span>
+        </div>
+        <div class="filters">
+          <div class="field"><label>Table</label>
+            <select id="audit-f-table">
+              <option value="">All tables</option>
+              <option value="sales">Sales</option>
+              <option value="expenses">Expenses</option>
+              <option value="issued_invoices">Sales Report (invoices)</option>
+              <option value="withholding_2307">2307 Register</option>
+              <option value="staff_commissions">Commissions</option>
+              <option value="petty_cash_vouchers">Petty Cash</option>
+              <option value="daily_cash_counts">Daily Cash Counts</option>
+            </select>
+          </div>
+          <div class="field"><label>Action</label>
+            <select id="audit-f-action">
+              <option value="">All actions</option>
+              <option value="INSERT">Insert</option>
+              <option value="UPDATE">Update</option>
+              <option value="DELETE">Delete</option>
+            </select>
+          </div>
+          <div class="field wide"><label>Search (who changed it)</label><input id="audit-f-search" placeholder="email..." /></div>
+          <button class="btn small accent" id="audit-f-apply">Search</button>
+          <button class="btn small ghost" id="audit-f-clear">Clear</button>
+        </div>
+        <div class="table-wrap"><table class="data" id="audit-table">
+          <thead><tr><th>When</th><th>Table</th><th>Row</th><th>Action</th><th>By</th><th>Role</th><th>Details</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
       </div>
     </section>
 
