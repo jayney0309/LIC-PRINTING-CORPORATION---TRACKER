@@ -180,7 +180,13 @@
     $("nav-settings-group").style.display = currentRole === "admin" ? "" : "none";
     if (!bootedAfterAuth) {
       bootedAfterAuth = true;
-      loadDashboard();
+      // A tab opened straight from a nav link (right-click -> "Open link in
+      // new tab", or a bookmarked/pasted URL) carries the target view as a
+      // #hash -- land on that section instead of always starting at the
+      // Dashboard. Falls back to Dashboard if the hash is missing, unknown,
+      // or restricted (showView() itself handles the admin-only redirect).
+      const hashView = (location.hash || "").replace(/^#/, "");
+      showView(loaders[hashView] ? hashView : "dashboard");
       refreshDatalists();
     }
   }
@@ -281,9 +287,23 @@
     });
     document.querySelectorAll(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
     $("view-title").textContent = titles[name] || titles[sectionId];
+    // Nav items are real links (href="#viewname") so right-click -> "Open
+    // link in new tab" opens straight into that section in its own browser
+    // tab. Keep the address bar's hash in sync here (replaceState, not
+    // pushState -- this isn't meant to add a Back/Forward history entry per
+    // click) so copying the current URL, or reloading, lands back on the
+    // same view too.
+    if (window.history && history.replaceState) {
+      history.replaceState(null, "", location.pathname + location.search + "#" + name);
+    }
     if (sb && loaders[name]) loaders[name]();
   }
-  document.querySelectorAll(".nav-btn").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
+  document.querySelectorAll(".nav-btn").forEach((b) =>
+    b.addEventListener("click", (e) => {
+      e.preventDefault();
+      showView(b.dataset.view);
+    })
+  );
 
   // ---------------------------------------------------------------- datalists (shared reference data)
   async function refreshDatalists() {

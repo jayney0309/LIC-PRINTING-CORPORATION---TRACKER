@@ -65,7 +65,7 @@ table { font-variant-numeric: tabular-nums; }
   display: flex; align-items: center; gap: 10px;
   background: transparent; border: none; color: #cfe1df;
   text-align: left; padding: 9px 10px; border-radius: var(--radius-sm);
-  cursor: pointer; font-size: 13.5px;
+  cursor: pointer; font-size: 13.5px; text-decoration: none;
 }
 .nav-btn .ic { width: 16px; text-align: center; opacity: 0.85; }
 .nav-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
