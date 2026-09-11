@@ -48,7 +48,7 @@
       <button class="nav-btn" data-view="opsreport"><span class="ic">&#9755;</span> Report</button>
 
       <div id="nav-settings-group">
-        <div class="nav-group-label">Settings</div>
+        <div class="nav-group-label">Admin</div>
         <button class="nav-btn" data-view="commission"><span class="ic">&#9755;</span> Commission</button>
         <button class="nav-btn" data-view="staff"><span class="ic">&#9755;</span> Employees</button>
       </div>
@@ -56,6 +56,7 @@
       <div id="nav-admin-group">
         <div class="nav-group-label">Tax &amp; compliance (5JS)</div>
         <button class="nav-btn" data-view="invoices"><span class="ic">&#9755;</span> Sales Report</button>
+        <button class="nav-btn" data-view="salessearch"><span class="ic">&#9755;</span> Sales Search</button>
         <button class="nav-btn" data-view="expensesreport"><span class="ic">&#9755;</span> Expenses Report</button>
         <button class="nav-btn" data-view="withholding"><span class="ic">&#9755;</span> 2307 Register</button>
         <button class="nav-btn" data-view="reports"><span class="ic">&#9755;</span> Reports</button>
@@ -634,6 +635,9 @@
               <option value="CORPORATION">Corporation only</option>
             </select>
           </div>
+          <div class="field"><label>Employee</label>
+            <select id="commission-f-employee"><option value="">All</option></select>
+          </div>
           <div class="field wide"><label>Search</label><input id="commission-f-search" placeholder="Staff or tradename..." /></div>
           <button class="btn small accent" id="commission-f-apply">Search</button>
           <button class="btn small ghost" id="commission-f-clear">Clear</button>
@@ -644,6 +648,31 @@
             <th class="num">Total</th><th class="num">Received</th><th class="num">Commission</th><th>Status</th><th>Paid</th><th>Date Paid</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
+        </table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Reconcile an employee's sales vs. commission claimed</h2>
+          <span class="hint">Every sale logged under that employee's name (walk-ins excluded) — cross-checked against the commission list above</span>
+        </div>
+        <p class="section-note">Pick an employee to list every qualifying sale of theirs and whether it already has a commission record. A sale only gets a commission row automatically once it's Fully Paid — "Not fully paid yet" isn't a problem, but "No commission record" on a Fully Paid sale is worth double-checking. (On some old sales, the Staff field held a placeholder like "WALK IN", "LIC REPEAT CUSTOMER" or "DENNIS" instead of a real name — those never show up as a selectable employee here, so they're excluded from this check automatically. The Commission tab's own list above filters those same placeholders out too, so they don't appear as if someone's owed a commission.)</p>
+        <div class="filters">
+          <div class="field"><label>Employee</label>
+            <select id="reconcile-employee"><option value="">Choose an employee…</option></select>
+          </div>
+          <div class="field"><label>From</label><input type="date" id="reconcile-from" /></div>
+          <div class="field"><label>To</label><input type="date" id="reconcile-to" /></div>
+          <button class="btn small accent" id="reconcile-apply">Run</button>
+          <button class="btn small ghost" id="reconcile-clear">Clear</button>
+        </div>
+        <p class="section-note" id="reconcile-summary"></p>
+        <div class="table-wrap"><table class="data" id="reconcile-table">
+          <thead><tr>
+            <th>Date</th><th>Entity</th><th>Tradename</th><th>Xero Invoice</th><th class="num">Total</th>
+            <th class="num">Received</th><th>Payment status</th><th class="num">Commission (10%)</th><th>Commission status</th>
+          </tr></thead>
+          <tbody><tr class="empty-row"><td colspan="9">Pick an employee above to run this check</td></tr></tbody>
         </table></div>
       </div>
     </section>
@@ -701,6 +730,35 @@
             <th class="num">Net</th><th class="num">VAT</th><th class="num">WTax</th><th>2307</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ======================= SALES SEARCH ======================= -->
+    <section id="view-salessearch" class="view">
+      <p class="section-note">Search every logged sale, both entities, whether or not it has a BIR receipt yet — by its Xero invoice number or its BIR receipt number.</p>
+      <div class="panel">
+        <div class="panel-head"><h2>Search sales</h2></div>
+        <div class="filters">
+          <div class="field wide"><label>Xero or BIR invoice no.</label><input id="salessearch-f-invoice" placeholder="e.g. INV-1029 or 00123" /></div>
+          <div class="field"><label>From</label><input type="date" id="salessearch-f-from" /></div>
+          <div class="field"><label>To</label><input type="date" id="salessearch-f-to" /></div>
+          <div class="field"><label>Entity</label>
+            <select id="salessearch-f-entity">
+              <option value="">All</option>
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship</option>
+              <option value="CORPORATION">Corporation</option>
+            </select>
+          </div>
+          <button class="btn small accent" id="salessearch-f-apply">Search</button>
+          <button class="btn small ghost" id="salessearch-f-clear">Clear</button>
+        </div>
+        <div class="table-wrap"><table class="data" id="salessearch-table">
+          <thead><tr>
+            <th>Date</th><th>Tradename</th><th>Staff</th><th>Entity</th><th class="num">Total</th>
+            <th class="num">Received</th><th class="num">Balance</th><th>Status</th><th>Xero Invoice</th><th>BIR receipt</th>
+          </tr></thead>
+          <tbody><tr class="empty-row"><td colspan="10">Enter an invoice number (Xero or BIR) or a date range to search</td></tr></tbody>
         </table></div>
       </div>
     </section>
