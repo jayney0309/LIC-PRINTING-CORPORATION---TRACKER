@@ -51,12 +51,13 @@
         <div class="nav-group-label">Admin</div>
         <a class="nav-btn" href="#commission" data-view="commission"><span class="ic">&#9755;</span> Commission</a>
         <a class="nav-btn" href="#staff" data-view="staff"><span class="ic">&#9755;</span> Employees</a>
+        <a class="nav-btn" href="#salessearch" data-view="salessearch"><span class="ic">&#9755;</span> Sales Search</a>
+        <a class="nav-btn" href="#cashdisbursement" data-view="cashdisbursement"><span class="ic">&#9755;</span> Cash Disbursement</a>
       </div>
 
       <div id="nav-admin-group">
         <div class="nav-group-label">Tax &amp; compliance (5JS)</div>
         <a class="nav-btn" href="#invoices" data-view="invoices"><span class="ic">&#9755;</span> Sales Report</a>
-        <a class="nav-btn" href="#salessearch" data-view="salessearch"><span class="ic">&#9755;</span> Sales Search</a>
         <a class="nav-btn" href="#expensesreport" data-view="expensesreport"><span class="ic">&#9755;</span> Expenses Report</a>
         <a class="nav-btn" href="#withholding" data-view="withholding"><span class="ic">&#9755;</span> 2307 Register</a>
         <a class="nav-btn" href="#reports" data-view="reports"><span class="ic">&#9755;</span> Reports</a>
@@ -679,11 +680,12 @@
 
     <!-- ======================= STAFF / EMPLOYEES ======================= -->
     <section id="view-staff" class="view">
-      <p class="section-note">Manage who shows up in the Staff dropdown when logging a sale. Renaming someone here only changes how their name displays going forward on this list — past sales, commissions and petty cash vouchers already saved under their old name keep that old name and won't be relinked automatically. Deactivating keeps all of that person's past sales and report totals intact — only delete a row if you're sure you don't need it anymore.</p>
+      <p class="section-note">Manage who shows up in the Staff dropdown when logging a sale. Renaming someone here also updates every past Daily Sales, Commission and Petty Cash Voucher record filed under their old name to the new one — their whole history moves with the rename, it doesn't split into an old-name pile and a new-name pile. (This only relinks an exact match to the old name — a mixed/compound entry like "DENNIS/JESLIE" isn't touched, since it isn't actually the same value.) Deactivating keeps all of that person's past sales and report totals intact — only delete a row if you're sure you don't need it anymore.</p>
       <div class="panel">
         <div class="panel-head"><h2 id="staff-form-title">Add employee</h2></div>
         <form id="staff-form" class="form-grid">
           <input type="hidden" id="staff-id" />
+          <input type="hidden" id="staff-old-name" />
           <div class="field wide"><label>Name</label><input id="staff-name" required placeholder="e.g. JUAN DELA CRUZ" /></div>
           <div class="form-actions wide">
             <button type="submit" class="btn primary" id="staff-submit">Add employee</button>
@@ -763,9 +765,47 @@
       </div>
     </section>
 
+    <!-- ======================= CASH DISBURSEMENT (ALL EXPENSES) ======================= -->
+    <section id="view-cashdisbursement" class="view">
+      <p class="section-note">Every logged expense, both entities, valid receipt or not — the Expenses Report under Tax &amp; compliance only shows VAT / Non-VAT (BIR-receipted) ones; this is the complete picture, for internal reconciliation.</p>
+      <div class="panel">
+        <div class="panel-head"><h2>Search expenses</h2></div>
+        <div class="filters">
+          <div class="field wide"><label>Search</label><input id="cashdisb-f-search" placeholder="Business / payee name..." /></div>
+          <div class="field"><label>From</label><input type="date" id="cashdisb-f-from" /></div>
+          <div class="field"><label>To</label><input type="date" id="cashdisb-f-to" /></div>
+          <div class="field"><label>Entity</label>
+            <select id="cashdisb-f-entity">
+              <option value="">All</option>
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship</option>
+              <option value="CORPORATION">Corporation</option>
+            </select>
+          </div>
+          <div class="field"><label>Tax type</label>
+            <select id="cashdisb-f-taxtype">
+              <option value="">All (valid or not valid receipts)</option>
+              <option value="VAT">VAT</option>
+              <option value="NVAT">Non-VAT</option>
+              <option value="EXEMPT">Exempt</option>
+              <option value="NOT BIR RECEIPT">Not a BIR receipt</option>
+            </select>
+          </div>
+          <button class="btn small accent" id="cashdisb-f-apply">Search</button>
+          <button class="btn small ghost" id="cashdisb-f-clear">Clear</button>
+        </div>
+        <div class="table-wrap"><table class="data" id="cashdisb-table">
+          <thead><tr>
+            <th>Date</th><th>Business</th><th>Category</th><th>Tax type</th><th>Entity</th>
+            <th class="num">Amount</th><th>Mode</th><th>Invoice/OR no.</th>
+          </tr></thead>
+          <tbody><tr class="empty-row"><td colspan="8">Enter a search term or a date range to search</td></tr></tbody>
+        </table></div>
+      </div>
+    </section>
+
     <!-- ======================= EXPENSES REPORT ======================= -->
     <section id="view-expensesreport" class="view">
-      <p class="section-note">All logged expenses, for BIR review — combine both entities or filter to just one.</p>
+      <p class="section-note">Only expenses tagged VAT or Non-VAT (a real BIR receipt), for BIR review — Exempt and anything logged as "Not a BIR receipt" are both left out of this Tax & compliance view. (For the complete, unrestricted list of every expense — see Cash Disbursement under Admin.) Combine both entities or filter to just one.</p>
       <div class="panel">
         <div class="filters">
           <div class="field"><label>From</label><input type="date" id="expreport-from" /></div>
@@ -784,7 +824,6 @@
               <option value="vat_tin">VAT, with TIN</option>
               <option value="withholding">With withholding tax</option>
               <option value="nonvat">Non-VAT</option>
-              <option value="others">Others (exempt / no BIR receipt)</option>
             </select>
           </div>
           <button class="btn small accent" id="expreport-apply">Search</button>
@@ -922,7 +961,7 @@
 
     <!-- ======================= INCOME STATEMENT ======================= -->
     <section id="view-incomestatement" class="view">
-      <p class="section-note">Revenue less expenses for the period you pick. Revenue comes from the Sales Report (the official BIR-facing sales record); expenses come from logged Expenses.</p>
+      <p class="section-note">Revenue less expenses for the period you pick, both sourced from Tax &amp; compliance — Revenue from the Sales Report (the official BIR-facing sales record) and Expenses from the Expenses Report (VAT / Non-VAT expenses only — the same restriction that page uses). Same numbers you'd get running both of those reports separately for this period and netting them.</p>
       <div class="panel">
         <div class="filters">
           <div class="field"><label>From</label><input type="date" id="incstmt-from" /></div>

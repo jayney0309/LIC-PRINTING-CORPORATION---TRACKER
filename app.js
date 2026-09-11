@@ -118,7 +118,7 @@
   // ---------------------------------------------------------------- auth gate
   let bootedAfterAuth = false;
 
-  const ADMIN_ONLY_VIEWS = ["invoices", "salessearch", "expensesreport", "withholding", "reports", "incomestatement", "audit", "commission", "staff"];
+  const ADMIN_ONLY_VIEWS = ["invoices", "salessearch", "cashdisbursement", "expensesreport", "withholding", "reports", "incomestatement", "audit", "commission", "staff"];
   let currentRole = "staff";
 
   // Daily Sales and Daily Expenses each have two locked-entity nav entries
@@ -240,14 +240,14 @@
   }
 
   // ---------------------------------------------------------------- nav
-  const views = ["dashboard", "sales", "expenses", "pettycash", "receivables", "bills", "opsreport", "commission", "staff", "invoices", "salessearch", "expensesreport", "withholding", "reports", "incomestatement", "audit"];
+  const views = ["dashboard", "sales", "expenses", "pettycash", "receivables", "bills", "opsreport", "commission", "staff", "invoices", "salessearch", "cashdisbursement", "expensesreport", "withholding", "reports", "incomestatement", "audit"];
   const titles = {
     dashboard: "Dashboard",
     "sales-sp": "Daily Sales — LIC Printing Shop", "sales-corp": "Daily Sales — LIC Printing Corporation",
     "expenses-sp": "Daily Expenses — LIC Printing Shop", "expenses-corp": "Daily Expenses — LIC Printing Corporation",
     pettycash: "Petty Cash Vouchers",
     receivables: "Receivables", bills: "Bill Tracker", opsreport: "Daily Operations Report", commission: "Commission", staff: "Employees",
-    invoices: "Sales Report", salessearch: "Sales Search", expensesreport: "Expenses Report", withholding: "2307 Register", reports: "Reports", incomestatement: "Income Statement",
+    invoices: "Sales Report", salessearch: "Sales Search", cashdisbursement: "Cash Disbursement", expensesreport: "Expenses Report", withholding: "2307 Register", reports: "Reports", incomestatement: "Income Statement",
     audit: "Audit & Integrity",
   };
   const loaded = {};
@@ -257,7 +257,7 @@
     "expenses-sp": loadExpenses, "expenses-corp": loadExpenses,
     pettycash: loadPettyCash,
     receivables: loadReceivables, bills: loadBills, opsreport: loadOpsReport, commission: loadCommissions, staff: loadStaff,
-    invoices: loadInvoices, salessearch: loadSalesSearch, expensesreport: loadExpensesReport, withholding: loadWithholding, reports: loadReports, incomestatement: loadIncomeStatement,
+    invoices: loadInvoices, salessearch: loadSalesSearch, cashdisbursement: loadCashDisbursement, expensesreport: loadExpensesReport, withholding: loadWithholding, reports: loadReports, incomestatement: loadIncomeStatement,
     audit: loadAuditView,
   };
 
@@ -1892,6 +1892,58 @@
   }
 
   /* =====================================================================
+     CASH DISBURSEMENT — every logged expense, both entities, valid BIR
+     receipt or not. The Expenses Report under Tax & compliance is
+     restricted to VAT/Non-VAT (BIR-receipted) expenses only; this is the
+     unrestricted view for internal reconciliation (the Admin group's
+     counterpart to Sales Search, which is the same idea for sales).
+     ===================================================================== */
+  function initCashDisbursementForm() {
+    $("cashdisb-f-apply").addEventListener("click", loadCashDisbursement);
+    $("cashdisb-f-search").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); loadCashDisbursement(); }
+    });
+    ["cashdisb-f-from", "cashdisb-f-to", "cashdisb-f-entity", "cashdisb-f-taxtype"].forEach((id) => $(id).addEventListener("change", loadCashDisbursement));
+    $("cashdisb-f-clear").addEventListener("click", () => {
+      $("cashdisb-f-search").value = "";
+      $("cashdisb-f-from").value = "";
+      $("cashdisb-f-to").value = "";
+      $("cashdisb-f-entity").value = "";
+      $("cashdisb-f-taxtype").value = "";
+      loadCashDisbursement();
+    });
+  }
+  async function loadCashDisbursement() {
+    if (!requireDb()) return;
+    const search = $("cashdisb-f-search").value.trim();
+    const from = $("cashdisb-f-from").value;
+    const to = $("cashdisb-f-to").value;
+    const entity = $("cashdisb-f-entity").value;
+    const taxType = $("cashdisb-f-taxtype").value;
+    const tb = $("cashdisb-table").querySelector("tbody");
+    if (!search && !from && !to && !entity && !taxType) {
+      tb.innerHTML = `<tr class="empty-row"><td colspan="8">Enter a search term or a date range to search</td></tr>`;
+      return;
+    }
+    let q = sb.from("expenses").select("*").is("deleted_at", null).order("trx_date", { ascending: false });
+    if (search) q = q.ilike("business_name", `%${search}%`);
+    if (from) q = q.gte("trx_date", from);
+    if (to) q = q.lte("trx_date", to);
+    if (entity) q = q.eq("business_entity", entity);
+    if (taxType) q = q.eq("tax_type", taxType);
+    const { data, error } = await q.limit(2000);
+    if (error) return toast(error.message, true);
+    const rows = data || [];
+    tb.innerHTML = rows.length
+      ? rows.map((r) => `<tr>
+          <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.business_name)}</td><td>${escapeHtml(r.category || "")}</td>
+          <td>${escapeHtml(r.tax_type || "")}</td><td>${escapeHtml(entityLabel(r.business_entity))}</td>
+          <td class="num">₱ ${fmtMoney(r.amount)}</td><td>${escapeHtml(r.mode_of_payment || "")}</td><td>${escapeHtml(r.invoice_no || "")}</td>
+        </tr>`).join("")
+      : `<tr class="empty-row"><td colspan="8">No expenses match these filters</td></tr>`;
+  }
+
+  /* =====================================================================
      EXPENSES REPORT (Tax & Compliance) — all logged expenses, both entities
      ===================================================================== */
   let lastExpReportRows = [];
@@ -1944,13 +1996,16 @@
     XLSX.writeFile(wb, "expenses_report_SLP_relief.xlsx");
   }
   // Category filter (item 9): "VAT, with TIN" / "With withholding tax" /
-  // "Non-VAT" / "Others" (exempt, no BIR receipt, or anything else).
+  // "Non-VAT". Tax & compliance only ever shows expenses tagged VAT or
+  // Non-VAT (a real BIR receipt) -- both "EXEMPT" and "NOT BIR RECEIPT" are
+  // excluded at the query level below, not filtered here. (The unrestricted
+  // view -- every expense, any tax type, valid receipt or not -- is Cash
+  // Disbursement, under Admin.)
   function matchesExpReportCategory(r, cat) {
     if (!cat) return true;
     if (cat === "vat_tin") return r.tax_type === "VAT" && !!(r.tin || "").trim();
     if (cat === "withholding") return Number(r.tax_withheld || 0) > 0;
     if (cat === "nonvat") return r.tax_type === "NVAT";
-    if (cat === "others") return r.tax_type === "EXEMPT" || r.tax_type === "NOT BIR RECEIPT" || !r.tax_type;
     return true;
   }
   async function loadExpensesReport() {
@@ -1968,7 +2023,11 @@
     if (search) q = q.ilike("business_name", `%${search}%`);
     const { data, error } = await q.limit(2000);
     if (error) return toast(error.message, true);
-    const rows = (data || []).filter((r) => matchesExpReportCategory(r, category));
+    // Tax & compliance is BIR-facing -- only VAT / Non-VAT expenses (i.e.
+    // ones with an actual BIR receipt) belong here; EXEMPT, "NOT BIR
+    // RECEIPT", and anything with no tax type recorded at all are all
+    // excluded first, regardless of which category filter is picked above.
+    const rows = (data || []).filter((r) => r.tax_type === "VAT" || r.tax_type === "NVAT").filter((r) => matchesExpReportCategory(r, category));
     lastExpReportRows = rows;
 
     const total = rows.reduce((a, r) => a + Number(r.amount || 0), 0);
@@ -2667,18 +2726,52 @@
   /* =====================================================================
      STAFF (manage who shows up in the Staff dropdown)
      ===================================================================== */
+  // Renaming an employee now relinks their whole history, not just how
+  // their name displays going forward: every Daily Sales row, Commission
+  // row, and Petty Cash Voucher currently filed under their OLD name gets
+  // updated to the new one. Matched by an EXACT name match only (not
+  // ILIKE/partial) -- a mixed/compound value like "DENNIS/JESLIE" or
+  // "DENNIS C/O SIR RANEL" is left alone, since it isn't actually the same
+  // value as the plain old name. Runs as three independent updates (not
+  // dependent on each other or on the `sales` trigger that keeps
+  // staff_commissions in sync) so it still gets an already-Approved or
+  // -Paid commission row right, which that trigger, on its own, would skip
+  // once the sale has actually been renamed elsewhere (it fires an
+  // UPDATE.trigger on sales but only touches staff_name for still-'pending'
+  // rows unless the amount also changed).
+  async function renameStaffEverywhere(oldName, newName) {
+    const [salesRes, commRes, pettyRes] = await Promise.all([
+      sb.from("sales").update({ reference_person: newName }).eq("reference_person", oldName).select("id"),
+      sb.from("staff_commissions").update({ staff_name: newName }).eq("staff_name", oldName).select("id"),
+      sb.from("petty_cash_vouchers").update({ staff_name: newName }).eq("staff_name", oldName).select("id"),
+    ]);
+    [salesRes, commRes, pettyRes].forEach((r) => {
+      if (r.error) toast("Employee renamed, but relinking some old records failed: " + r.error.message, true);
+    });
+    return {
+      sales: salesRes.data ? salesRes.data.length : 0,
+      commissions: commRes.data ? commRes.data.length : 0,
+      pettyCash: pettyRes.data ? pettyRes.data.length : 0,
+    };
+  }
   function initStaffForm() {
     $("staff-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!requireDb()) return;
       const id = $("staff-id").value;
+      const oldName = $("staff-old-name").value;
       const name = $("staff-name").value.trim();
       if (!name) return;
       let error;
       if (id) ({ error } = await sb.from("staff").update({ name }).eq("id", id));
       else ({ error } = await sb.from("staff").insert({ name }));
       if (error) return toast(error.message, true);
-      toast(id ? "Employee renamed" : "Employee added");
+      let msg = id ? "Employee renamed" : "Employee added";
+      if (id && oldName && oldName !== name) {
+        const counts = await renameStaffEverywhere(oldName, name);
+        msg += ` — relinked ${counts.sales} sale(s), ${counts.commissions} commission(s), ${counts.pettyCash} petty cash voucher(s)`;
+      }
+      toast(msg);
       resetStaffForm();
       loadStaff();
       refreshDatalists();
@@ -2689,6 +2782,7 @@
   function resetStaffForm() {
     $("staff-form").reset();
     $("staff-id").value = "";
+    $("staff-old-name").value = "";
     $("staff-form-title").textContent = "Add employee";
     $("staff-submit").textContent = "Add employee";
     $("staff-cancel-edit").style.display = "none";
@@ -2696,6 +2790,7 @@
   function editStaff(r) {
     if (!r) return;
     $("staff-id").value = r.id;
+    $("staff-old-name").value = r.name;
     $("staff-name").value = r.name;
     $("staff-form-title").textContent = "Rename employee";
     $("staff-submit").textContent = "Save name";
@@ -2774,7 +2869,11 @@
 
     let invQuery = sb.from("issued_invoices").select("gross_sales,net_sales,vat,cancelled,month_declared,business_entity").gte("month_declared", from).lte("month_declared", to);
     if (entity) invQuery = invQuery.eq("business_entity", entity);
-    let expQuery = sb.from("expenses").select("amount,category,business_entity").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null);
+    // Same scope as the Tax & compliance Expenses Report -- only VAT /
+    // Non-VAT expenses (a real BIR receipt). Exempt, "Not a BIR receipt",
+    // and anything with no tax type recorded are excluded, so this always
+    // matches what Expenses Report shows for the same period/entity.
+    let expQuery = sb.from("expenses").select("amount,category,business_entity").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null).in("tax_type", ["VAT", "NVAT"]);
     if (entity) expQuery = expQuery.eq("business_entity", entity);
     const [{ data: inv, error: iErr }, { data: exp, error: eErr }] = await Promise.all([
       invQuery,
@@ -3077,6 +3176,7 @@
   initBillsForm();
   initInvoicesForm();
   initSalesSearchForm();
+  initCashDisbursementForm();
   initExpensesReportForm();
   initWithholdingForm();
   initOpsReportForm();
