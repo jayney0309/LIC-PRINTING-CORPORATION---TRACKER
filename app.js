@@ -211,13 +211,13 @@
   }
 
   // ---------------------------------------------------------------- nav
-  const views = ["dashboard", "sales", "expenses", "pettycash", "receivables", "bills", "opsreport", "staff", "invoices", "expensesreport", "withholding", "reports", "incomestatement"];
+  const views = ["dashboard", "sales", "expenses", "pettycash", "receivables", "bills", "opsreport", "commission", "staff", "invoices", "expensesreport", "withholding", "reports", "incomestatement"];
   const titles = {
     dashboard: "Dashboard",
     "sales-sp": "Daily Sales — LIC Printing Shop", "sales-corp": "Daily Sales — LIC Printing Corporation",
     "expenses-sp": "Daily Expenses — LIC Printing Shop", "expenses-corp": "Daily Expenses — LIC Printing Corporation",
     pettycash: "Petty Cash Vouchers",
-    receivables: "Receivables", bills: "Bill Tracker", opsreport: "Daily Operations Report", staff: "Staff",
+    receivables: "Receivables", bills: "Bill Tracker", opsreport: "Daily Operations Report", commission: "Commission", staff: "Staff",
     invoices: "Sales Report", expensesreport: "Expenses Report", withholding: "2307 Register", reports: "Reports", incomestatement: "Income Statement",
   };
   const loaded = {};
@@ -226,7 +226,7 @@
     "sales-sp": loadSales, "sales-corp": loadSales,
     "expenses-sp": loadExpenses, "expenses-corp": loadExpenses,
     pettycash: loadPettyCash,
-    receivables: loadReceivables, bills: loadBills, opsreport: loadOpsReport, staff: loadStaff,
+    receivables: loadReceivables, bills: loadBills, opsreport: loadOpsReport, commission: loadCommissions, staff: loadStaff,
     invoices: loadInvoices, expensesreport: loadExpensesReport, withholding: loadWithholding, reports: loadReports, incomestatement: loadIncomeStatement,
   };
 
@@ -2030,17 +2030,13 @@
     if (entity) salesQuery = salesQuery.eq("business_entity", entity);
     let expQuery = sb.from("expenses").select("trx_date,amount,mode_of_payment,category,business_name,business_entity").gte("trx_date", from).lte("trx_date", to);
     if (entity) expQuery = expQuery.eq("business_entity", entity);
-    let commQuery = sb.from("staff_commissions").select("*").gte("trx_date", from).lte("trx_date", to).order("trx_date", { ascending: false });
-    if (entity) commQuery = commQuery.eq("business_entity", entity);
 
-    const [{ data: sales, error: sErr }, { data: exp, error: eErr }, { data: commissions, error: cErr }] = await Promise.all([
+    const [{ data: sales, error: sErr }, { data: exp, error: eErr }] = await Promise.all([
       salesQuery,
       expQuery,
-      commQuery,
     ]);
     if (sErr) return toast(sErr.message, true);
     if (eErr) return toast(eErr.message, true);
-    if (cErr) console.warn("staff_commissions load failed", cErr.message);
 
     const sum = (rows, key) => (rows || []).reduce((a, r) => a + Number(r[key] || 0), 0);
     const totalSales = sum(sales, "total_amount");
@@ -2084,14 +2080,24 @@
       entityPanel.style.display = "none";
     }
 
-    // ---- with vs without BIR receipt (item 14) ----
-    const withReceipt = (sales || []).filter((r) => (r.bir_receipt_no || "").trim());
-    const withoutReceipt = (sales || []).filter((r) => !(r.bir_receipt_no || "").trim());
+    // ---- with vs without BIR receipt (item 14), broken down per entity
+    // when "Combined" is selected so Sole Prop and Corp don't get mixed
+    // together in one line ----
+    const birEntities = entity ? [entity] : ["SOLE PROPRIETORSHIP", "CORPORATION"];
+    const birRowsHtml = [];
+    birEntities.forEach((e) => {
+      const eSales = (sales || []).filter((r) => (r.business_entity || "SOLE PROPRIETORSHIP") === e);
+      const withReceipt = eSales.filter((r) => (r.bir_receipt_no || "").trim());
+      const withoutReceipt = eSales.filter((r) => !(r.bir_receipt_no || "").trim());
+      birRowsHtml.push(`<tr><td>${escapeHtml(fullEntityLabel(e))}</td><td>With BIR receipt no.</td><td class="num">${withReceipt.length}</td><td class="num">₱ ${fmtMoney(sum(withReceipt, "total_amount"))}</td></tr>`);
+      birRowsHtml.push(`<tr><td>${escapeHtml(fullEntityLabel(e))}</td><td>Without BIR receipt no.</td><td class="num">${withoutReceipt.length}</td><td class="num">₱ ${fmtMoney(sum(withoutReceipt, "total_amount"))}</td></tr>`);
+      if (!entity) {
+        birRowsHtml.push(`<tr><td>${escapeHtml(fullEntityLabel(e))}</td><td><strong>Subtotal</strong></td><td class="num"><strong>${eSales.length}</strong></td><td class="num"><strong>₱ ${fmtMoney(sum(eSales, "total_amount"))}</strong></td></tr>`);
+      }
+    });
+    birRowsHtml.push(`<tr><td colspan="2"><strong>TOTAL (all entities)</strong></td><td class="num"><strong>${(sales || []).length}</strong></td><td class="num"><strong>₱ ${fmtMoney(totalSales)}</strong></td></tr>`);
     const birTb = $("opsreport-bir-table").querySelector("tbody");
-    birTb.innerHTML = `
-      <tr><td>With BIR receipt no.</td><td class="num">${withReceipt.length}</td><td class="num">₱ ${fmtMoney(sum(withReceipt, "total_amount"))}</td></tr>
-      <tr><td>Without BIR receipt no.</td><td class="num">${withoutReceipt.length}</td><td class="num">₱ ${fmtMoney(sum(withoutReceipt, "total_amount"))}</td></tr>
-      <tr><td><strong>TOTAL</strong></td><td class="num"><strong>${(sales || []).length}</strong></td><td class="num"><strong>₱ ${fmtMoney(totalSales)}</strong></td></tr>`;
+    birTb.innerHTML = birRowsHtml.join("");
 
     // ---- breakdown by mode of payment (for closing the register) ----
     const modes = {};
@@ -2174,31 +2180,9 @@
           </tr>`
       : `<tr class="empty-row"><td colspan="5">No sales in this period</td></tr>`;
 
-    // ---- commissions pending approval (item 16) ----
-    const commTb = $("opsreport-commission-table").querySelector("tbody");
-    const commRows = commissions || [];
-    commTb.innerHTML = commRows.length
-      ? commRows.map((c) => `<tr>
-          <td>${fmtDate(c.trx_date)}</td><td>${escapeHtml(c.staff_name)}</td>
-          <td class="num">₱ ${fmtMoney(c.sale_total)}</td><td class="num">${(Number(c.commission_rate) * 100).toFixed(0)}%</td>
-          <td class="num">₱ ${fmtMoney(c.commission_amount)}</td>
-          <td>${c.status === "approved" ? statusBadge("FULLY PAID") : statusBadge("UNPAID")}${c.needs_review ? ' <span class="badge warn">changed since approval</span>' : ""}</td>
-          <td class="row-actions">
-            ${currentRole === "admin" && c.status !== "approved" ? `<button class="btn small accent" data-approve-comm="${c.id}">Approve</button>` : ""}
-          </td>
-        </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="7">No fully-paid sales with a staff assigned in this period</td></tr>`;
-    commTb.querySelectorAll("[data-approve-comm]").forEach((btn) =>
-      btn.addEventListener("click", async () => {
-        const { data: { user } } = await sb.auth.getUser();
-        const { error } = await sb.from("staff_commissions").update({
-          status: "approved", approved_at: new Date().toISOString(), approved_by: user?.email || null, needs_review: false,
-        }).eq("id", btn.dataset.approveComm);
-        if (error) return toast(error.message, true);
-        toast("Commission approved");
-        loadOpsReport();
-      })
-    );
+    // (Commissions pending approval now live on their own "Commission" tab
+    // — see loadCommissions() — instead of being scoped to this report's
+    // From/To period.)
 
     // ---- sales for the period, consolidating repeat payments against the
     // same Xero invoice no. into one line (item 2 + item 17) ----
@@ -2242,6 +2226,73 @@
           <td>${escapeHtml(r.category || "")}</td><td class="num">₱ ${fmtMoney(r.amount)}</td><td>${escapeHtml(r.mode_of_payment || "")}</td>
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="5">No expenses in this period</td></tr>`;
+  }
+
+  /* =====================================================================
+     COMMISSION -- its own tab so pending approvals are never hidden behind
+     whatever date range the Daily Operations Report happens to be on.
+     ===================================================================== */
+  function initCommissionForm() {
+    $("commission-f-apply").addEventListener("click", loadCommissions);
+    ["commission-f-status", "commission-f-entity"].forEach((id) => $(id).addEventListener("change", loadCommissions));
+    $("commission-f-search").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); loadCommissions(); }
+    });
+    $("commission-f-clear").addEventListener("click", () => {
+      $("commission-f-status").value = "pending";
+      $("commission-f-entity").value = "";
+      $("commission-f-search").value = "";
+      loadCommissions();
+    });
+  }
+  async function loadCommissions() {
+    if (!requireDb()) return;
+    const status = $("commission-f-status").value;
+    const entity = $("commission-f-entity").value;
+    const search = $("commission-f-search").value.trim();
+    // Embed the linked sale so the Xero invoice no., tradename and amount
+    // received show up here without duplicating those columns onto
+    // staff_commissions itself.
+    let q = sb.from("staff_commissions").select("*, sales(tradename, invoice_no, amount_received)")
+      .order("status", { ascending: true }).order("trx_date", { ascending: false }).limit(500);
+    if (status) q = q.eq("status", status);
+    if (entity) q = q.eq("business_entity", entity);
+    if (search) q = q.ilike("staff_name", `%${search}%`);
+    const { data, error } = await q;
+    if (error) return toast(error.message, true);
+    let rows = data || [];
+    // Tradename search has to happen client-side since it's on the
+    // embedded `sales` row, not a column Postgrest can filter on directly
+    // alongside an `ilike` on staff_name in one query.
+    if (search) {
+      const s = search.toLowerCase();
+      rows = rows.filter((r) => (r.staff_name || "").toLowerCase().includes(s) || (r.sales?.tradename || "").toLowerCase().includes(s));
+    }
+    const tb = $("commission-table").querySelector("tbody");
+    tb.innerHTML = rows.length
+      ? rows.map((c) => `<tr>
+          <td>${fmtDate(c.trx_date)}</td><td>${escapeHtml(entityLabel(c.business_entity))}</td>
+          <td>${escapeHtml(c.sales?.invoice_no || "")}</td><td>${escapeHtml(c.sales?.tradename || "")}</td>
+          <td>${escapeHtml(c.staff_name)}</td>
+          <td class="num">₱ ${fmtMoney(c.sale_total)}</td><td class="num">₱ ${fmtMoney(c.sales?.amount_received)}</td>
+          <td class="num">₱ ${fmtMoney(c.commission_amount)}</td>
+          <td>${c.status === "approved" ? statusBadge("FULLY PAID") : statusBadge("UNPAID")}${c.needs_review ? ' <span class="badge warn">changed since approval</span>' : ""}</td>
+          <td class="row-actions">
+            ${currentRole === "admin" && c.status !== "approved" ? `<button class="btn small accent" data-approve-comm="${c.id}">Approve</button>` : ""}
+          </td>
+        </tr>`).join("")
+      : `<tr class="empty-row"><td colspan="10">No commissions match these filters</td></tr>`;
+    tb.querySelectorAll("[data-approve-comm]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        const { data: { user } } = await sb.auth.getUser();
+        const { error: err2 } = await sb.from("staff_commissions").update({
+          status: "approved", approved_at: new Date().toISOString(), approved_by: user?.email || null, needs_review: false,
+        }).eq("id", btn.dataset.approveComm);
+        if (err2) return toast(err2.message, true);
+        toast("Commission approved");
+        loadCommissions();
+      })
+    );
   }
 
   /* =====================================================================
@@ -2497,6 +2548,7 @@
   initExpensesReportForm();
   initWithholdingForm();
   initOpsReportForm();
+  initCommissionForm();
   initStaffForm();
   initIncomeStatementForm();
   initAuthGate();

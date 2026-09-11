@@ -46,6 +46,7 @@
       <button class="nav-btn" data-view="receivables"><span class="ic">&#9755;</span> Receivables</button>
       <button class="nav-btn" data-view="bills"><span class="ic">&#9755;</span> Bill Tracker</button>
       <button class="nav-btn" data-view="opsreport"><span class="ic">&#9755;</span> Report</button>
+      <button class="nav-btn" data-view="commission"><span class="ic">&#9755;</span> Commission</button>
       <button class="nav-btn" data-view="staff"><span class="ic">&#9755;</span> Staff</button>
 
       <div id="nav-admin-group">
@@ -525,7 +526,7 @@
         </div>
         <div class="table-wrap"><table class="data" id="opsreport-bir-table">
           <thead><tr>
-            <th>Group</th><th class="num"># Transactions</th><th class="num">Total</th>
+            <th>Entity</th><th>Group</th><th class="num"># Transactions</th><th class="num">Total</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
@@ -539,19 +540,6 @@
         <div class="table-wrap"><table class="data" id="opsreport-staff-table">
           <thead><tr>
             <th>Staff</th><th class="num"># Transactions</th><th class="num">Total sales</th><th class="num">Amount received</th><th class="num">Outstanding</th>
-          </tr></thead>
-          <tbody></tbody>
-        </table></div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-head">
-          <h2>Commissions pending approval</h2>
-          <span class="hint">10% of each fully-paid sale, auto-computed — still needs an admin to approve before it counts as final</span>
-        </div>
-        <div class="table-wrap"><table class="data" id="opsreport-commission-table">
-          <thead><tr>
-            <th>Date</th><th>Staff</th><th class="num">Sale total</th><th class="num">Rate</th><th class="num">Commission</th><th>Status</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
@@ -578,6 +566,39 @@
         <div class="table-wrap"><table class="data" id="opsreport-expdetail-table">
           <thead><tr>
             <th>Date</th><th>Business</th><th>Category</th><th class="num">Amount</th><th>Mode</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ======================= COMMISSION ======================= -->
+    <section id="view-commission" class="view">
+      <p class="section-note">10% of each fully-paid sale with a staff member assigned, auto-computed — still needs an admin to approve before it's final. Not limited to a date range; every commission still waiting for approval shows up here regardless of when the sale happened.</p>
+      <div class="panel">
+        <div class="filters">
+          <div class="field"><label>Status</label>
+            <select id="commission-f-status">
+              <option value="pending">For approval</option>
+              <option value="approved">Claimed / approved</option>
+              <option value="">All</option>
+            </select>
+          </div>
+          <div class="field"><label>Entity</label>
+            <select id="commission-f-entity">
+              <option value="">Combined (all entities)</option>
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship only</option>
+              <option value="CORPORATION">Corporation only</option>
+            </select>
+          </div>
+          <div class="field wide"><label>Search</label><input id="commission-f-search" placeholder="Staff or tradename..." /></div>
+          <button class="btn small accent" id="commission-f-apply">Search</button>
+          <button class="btn small ghost" id="commission-f-clear">Clear</button>
+        </div>
+        <div class="table-wrap"><table class="data" id="commission-table">
+          <thead><tr>
+            <th>Date</th><th>Entity</th><th>Xero Invoice</th><th>Tradename</th><th>Staff</th>
+            <th class="num">Total</th><th class="num">Received</th><th class="num">Commission</th><th>Status</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
