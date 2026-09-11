@@ -112,7 +112,7 @@
           <span class="hint">Last 10 entries</span>
         </div>
         <div class="table-wrap"><table class="data" id="dash-recent-sales">
-          <thead><tr><th>Date</th><th>Tradename</th><th>Staff</th><th class="num">Total</th><th class="num">Balance</th><th>Status</th></tr></thead>
+          <thead><tr><th>Date</th><th>Tradename</th><th>Employee</th><th class="num">Total</th><th class="num">Balance</th><th>Status</th></tr></thead>
           <tbody></tbody>
         </table></div>
       </div>
@@ -131,7 +131,7 @@
           <div class="field"><label>Date</label><input type="date" id="sales-date" required /></div>
           <div class="field wide"><label>Tradename / Customer</label><input list="customer-list" id="sales-tradename" required placeholder="e.g. JUAN DELA CRUZ PRINTING" /></div>
           <div class="field"><label>Quote No.</label><input id="sales-quote" placeholder="QU-..." /></div>
-          <div class="field"><label>Staff</label><input list="staff-list" id="sales-staff" placeholder="Who handled it" /></div>
+          <div class="field"><label>Employee</label><input list="staff-list" id="sales-staff" placeholder="Who handled it" /></div>
           <div class="field"><label>Total Amount (Gross Sales)</label><input type="number" step="0.01" min="0" id="sales-total" required /></div>
           <div class="field"><label>Amount received</label><input type="number" step="0.01" min="0" id="sales-received" value="0" /></div>
           <div class="field"><label>Mode of payment</label><input list="payment-modes" id="sales-mode" /></div>
@@ -197,7 +197,7 @@
         </div>
         <div class="table-wrap"><table class="data" id="sales-table">
           <thead><tr>
-            <th>Date</th><th>Tradename</th><th>Staff</th><th class="num">Total</th><th class="num">Received</th>
+            <th>Date</th><th>Tradename</th><th>Employee</th><th class="num">Total</th><th class="num">Received</th>
             <th class="num">Balance</th><th>Status</th><th>Mode</th><th>Xero Invoice</th><th>2307</th><th>Sales Rpt</th><th>Payment</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
@@ -368,7 +368,7 @@
             </select>
           </div>
           <div class="field"><label>Date issued</label><input type="date" id="pettycash-date" required /></div>
-          <div class="field"><label>Staff / liaison</label><input list="staff-list" id="pettycash-staff" required placeholder="Who received the cash" /></div>
+          <div class="field"><label>Employee / liaison</label><input list="staff-list" id="pettycash-staff" required placeholder="Who received the cash" /></div>
           <div class="field"><label>Amount</label><input type="number" step="0.01" min="0" id="pettycash-amount" required /></div>
           <div class="field wide"><label>Particulars</label><input id="pettycash-particulars" placeholder="What it was for" /></div>
           <div class="field wide"><label>Remarks</label><input id="pettycash-remarks" /></div>
@@ -385,7 +385,7 @@
         <div class="filters">
           <div class="field"><label>From</label><input type="date" id="pettycash-f-from" /></div>
           <div class="field"><label>To</label><input type="date" id="pettycash-f-to" /></div>
-          <div class="field"><label>Staff</label><input id="pettycash-f-staff" placeholder="Staff name..." /></div>
+          <div class="field"><label>Employee</label><input id="pettycash-f-staff" placeholder="Employee name..." /></div>
           <div class="field"><label>Entity</label>
             <select id="pettycash-f-entity">
               <option value="">All</option>
@@ -398,7 +398,7 @@
         </div>
         <div class="table-wrap"><table class="data" id="pettycash-table">
           <thead><tr>
-            <th>Entity</th><th>Date issued</th><th>Staff</th><th class="num">Amount</th><th>Particulars</th><th>Remarks</th><th>Actions</th>
+            <th>Entity</th><th>Date issued</th><th>Employee</th><th class="num">Amount</th><th>Particulars</th><th>Remarks</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
@@ -427,7 +427,7 @@
         <div class="panel-head"><h2>Outstanding balances</h2></div>
         <div class="table-wrap"><table class="data" id="receivables-table">
           <thead><tr>
-            <th>Date</th><th>Tradename</th><th>Staff</th><th class="num">Total</th><th class="num">Received</th>
+            <th>Date</th><th>Tradename</th><th>Employee</th><th class="num">Total</th><th class="num">Received</th>
             <th class="num">Balance</th><th>Age</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
@@ -472,7 +472,7 @@
 
     <!-- ======================= DAILY OPERATIONS REPORT ======================= -->
     <section id="view-opsreport" class="view">
-      <p class="section-note">Cash/sales summary for closing the register, an expenses-by-category breakdown, plus a per-staff breakdown for the period you pick. The Entity filter applies to both Sales and Expenses.</p>
+      <p class="section-note">Cash/sales summary for closing the register, an expenses-by-category breakdown, plus a per-employee breakdown for the period you pick. The Entity filter applies to both Sales and Expenses.</p>
 
       <div class="panel">
         <div class="panel-head">
@@ -568,12 +568,12 @@
 
       <div class="panel">
         <div class="panel-head">
-          <h2>Staff performance</h2>
-          <span class="hint">Totals per staff member for the selected period — walk-in sales (no staff assigned) are grouped as "Walk-in"</span>
+          <h2>Employee performance</h2>
+          <span class="hint">Totals per employee for the selected period — walk-in sales (no employee assigned) are grouped as "Walk-in"</span>
         </div>
         <div class="table-wrap"><table class="data" id="opsreport-staff-table">
           <thead><tr>
-            <th>Staff</th><th class="num"># Transactions</th><th class="num">Total sales</th><th class="num">Amount received</th><th class="num">Outstanding</th>
+            <th>Employee</th><th class="num"># Transactions</th><th class="num">Total sales</th><th class="num">Amount received</th><th class="num">Outstanding</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
@@ -586,7 +586,7 @@
         </div>
         <div class="table-wrap"><table class="data" id="opsreport-salesdetail-table">
           <thead><tr>
-            <th>Date</th><th>Tradename</th><th>Staff</th><th>Xero Invoice</th><th class="num">Total</th>
+            <th>Date</th><th>Tradename</th><th>Employee</th><th>Xero Invoice</th><th class="num">Total</th>
             <th class="num">Received</th><th class="num">Balance</th><th>Mode(s)</th><th>BIR receipt</th>
           </tr></thead>
           <tbody></tbody>
@@ -609,10 +609,10 @@
         <div class="panel-head">
           <h2>Petty cash vouchers issued for the period</h2>
         </div>
-        <p class="section-note">Cash advanced to staff, not yet an expense — the actual expense is entered separately once accounted for with a receipt. Not included in the totals above.</p>
+        <p class="section-note">Cash advanced to employees, not yet an expense — the actual expense is entered separately once accounted for with a receipt. Not included in the totals above.</p>
         <div class="table-wrap"><table class="data" id="opsreport-pettycash-table">
           <thead><tr>
-            <th>Date issued</th><th>Entity</th><th>Staff</th><th class="num">Amount</th><th>Particulars</th>
+            <th>Date issued</th><th>Entity</th><th>Employee</th><th class="num">Amount</th><th>Particulars</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
@@ -621,7 +621,7 @@
 
     <!-- ======================= COMMISSION ======================= -->
     <section id="view-commission" class="view">
-      <p class="section-note">10% of each fully-paid sale with a staff member assigned, auto-computed — still needs an admin to approve before it's final, and is only actually handed to the staff member once marked Paid. Not limited to a date range; every commission still waiting for approval shows up here regardless of when the sale happened.</p>
+      <p class="section-note">10% of each fully-paid sale with an employee assigned, auto-computed — still needs an admin to approve before it's final, and is only actually handed to the employee once marked Paid. Not limited to a date range; every commission still waiting for approval shows up here regardless of when the sale happened.</p>
       <div class="panel">
         <div class="filters">
           <div class="field"><label>Status</label>
@@ -648,13 +648,13 @@
           <div class="field"><label>Employee</label>
             <select id="commission-f-employee"><option value="">All</option></select>
           </div>
-          <div class="field wide"><label>Search</label><input id="commission-f-search" placeholder="Staff or tradename..." /></div>
+          <div class="field wide"><label>Search</label><input id="commission-f-search" placeholder="Employee or tradename..." /></div>
           <button class="btn small accent" id="commission-f-apply">Search</button>
           <button class="btn small ghost" id="commission-f-clear">Clear</button>
         </div>
         <div class="table-wrap"><table class="data" id="commission-table">
           <thead><tr>
-            <th>Date</th><th>Entity</th><th>Xero Invoice</th><th>Tradename</th><th>Staff</th>
+            <th>Date</th><th>Entity</th><th>Xero Invoice</th><th>Tradename</th><th>Employee</th>
             <th class="num">Total</th><th class="num">Received</th><th class="num">Commission</th><th>Status</th><th>Paid</th><th>Date Paid</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
@@ -666,7 +666,7 @@
           <h2>Reconcile an employee's sales vs. commission claimed</h2>
           <span class="hint">Every sale logged under that employee's name (walk-ins excluded) — cross-checked against the commission list above</span>
         </div>
-        <p class="section-note">Pick an employee to list every qualifying sale of theirs and whether it already has a commission record. A sale only gets a commission row automatically once it's Fully Paid — "Not fully paid yet" isn't a problem, but "No commission record" on a Fully Paid sale is worth double-checking. (On some old sales, the Staff field held a placeholder like "WALK IN", "LIC REPEAT CUSTOMER" or "DENNIS" instead of a real name — those never show up as a selectable employee here, so they're excluded from this check automatically. The Commission tab's own list above filters those same placeholders out too, so they don't appear as if someone's owed a commission.)</p>
+        <p class="section-note">Pick an employee to list every qualifying sale of theirs and whether it already has a commission record. A sale only gets a commission row automatically once it's Fully Paid — "Not fully paid yet" isn't a problem, but "No commission record" on a Fully Paid sale is worth double-checking. (On some old sales, the Employee field held a placeholder like "WALK IN", "LIC REPEAT CUSTOMER" or "DENNIS" instead of a real name — those never show up as a selectable employee here, so they're excluded from this check automatically. The Commission tab's own list above filters those same placeholders out too, so they don't appear as if someone's owed a commission.)</p>
         <div class="filters">
           <div class="field"><label>Employee</label>
             <select id="reconcile-employee"><option value="">Choose an employee…</option></select>
@@ -687,9 +687,9 @@
       </div>
     </section>
 
-    <!-- ======================= STAFF / EMPLOYEES ======================= -->
+    <!-- ======================= EMPLOYEES ======================= -->
     <section id="view-staff" class="view">
-      <p class="section-note">Manage who shows up in the Staff dropdown when logging a sale. Renaming someone here also updates every past Daily Sales, Commission and Petty Cash Voucher record filed under their old name to the new one — their whole history moves with the rename, it doesn't split into an old-name pile and a new-name pile. (This only relinks an exact match to the old name — a mixed/compound entry like "DENNIS/JESLIE" isn't touched, since it isn't actually the same value.) Deactivating keeps all of that person's past sales and report totals intact — only delete a row if you're sure you don't need it anymore.</p>
+      <p class="section-note">Manage who shows up in the Employee dropdown when logging a sale. Renaming someone here also updates every past Daily Sales, Commission and Petty Cash Voucher record filed under their old name to the new one — their whole history moves with the rename, it doesn't split into an old-name pile and a new-name pile. (This only relinks an exact match to the old name — a mixed/compound entry like "DENNIS/JESLIE" isn't touched, since it isn't actually the same value.) Deactivating keeps all of that person's past sales and report totals intact — only delete a row if you're sure you don't need it anymore.</p>
       <div class="panel">
         <div class="panel-head"><h2 id="staff-form-title">Add employee</h2></div>
         <form id="staff-form" class="form-grid">
@@ -716,8 +716,8 @@
 
       <div class="panel">
         <div class="panel-head">
-          <h2>Clean up 2026 sales staff names</h2>
-          <span class="hint">Finds staff names recorded on 2026 sales that don't exactly match an employee name above — e.g. a typo or different casing — so you can retitle them to the official name in one go</span>
+          <h2>Clean up 2026 sales employee names</h2>
+          <span class="hint">Finds employee names recorded on 2026 sales that don't exactly match an employee name above — e.g. a typo or different casing — so you can retitle them to the official name in one go</span>
         </div>
         <p class="section-note">Scans <strong>2026 sales only</strong>. A rename here relinks that sale's Commission record and any 2026 Petty Cash Voucher under the same recorded name too — same relinking the Employees rename above does, just scoped to this year and starting from whatever's actually on the sale instead of an employee record.</p>
         <div class="form-actions"><button type="button" class="btn small accent" id="staffcleanup-scan">Scan 2026 sales</button></div>
@@ -786,7 +786,7 @@
         </div>
         <div class="table-wrap"><table class="data" id="salessearch-table">
           <thead><tr>
-            <th>Date</th><th>Tradename</th><th>Staff</th><th>Entity</th><th class="num">Total</th>
+            <th>Date</th><th>Tradename</th><th>Employee</th><th>Entity</th><th class="num">Total</th>
             <th class="num">Received</th><th class="num">Balance</th><th>Status</th><th>Xero Invoice</th><th>BIR receipt</th>
           </tr></thead>
           <tbody><tr class="empty-row"><td colspan="10">Enter an invoice number (Xero or BIR) or a date range to search</td></tr></tbody>

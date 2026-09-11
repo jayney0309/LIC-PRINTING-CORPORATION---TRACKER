@@ -588,7 +588,7 @@
       const rows = await fetchSalesRows();
       downloadCSV(currentSalesEntity === "CORPORATION" ? "sales_corporation.csv" : "sales_sole_prop.csv", rows, [
         { label: "Date", key: "trx_date" }, { label: "Tradename", key: "tradename" },
-        { label: "Staff", key: "reference_person" }, { label: "Total", key: "total_amount" },
+        { label: "Employee", key: "reference_person" }, { label: "Total", key: "total_amount" },
         { label: "Received", key: "amount_received" }, { label: "Balance", key: "balance" },
         { label: "Status", key: "status" }, { label: "Mode", key: "mode_of_payment" },
         { label: "Xero Invoice No", key: "invoice_no" }, { label: "Business Entity", key: "business_entity" },
@@ -2896,7 +2896,7 @@
               ${employees.map((e) => `<option value="${escapeHtml(e.name)}" ${e.name === row.suggested ? "selected" : ""}>${escapeHtml(e.name)}${e.active ? "" : " (inactive)"}</option>`).join("")}
             </select></td>
           </tr>`).join("")
-        : `<tr class="empty-row"><td colspan="3">Every staff name on a 2026 sale already matches an employee exactly — nothing to clean up</td></tr>`;
+        : `<tr class="empty-row"><td colspan="3">Every employee name on a 2026 sale already matches an employee exactly — nothing to clean up</td></tr>`;
       if (!staffCleanupRows.length) toast("No mismatches found in 2026 sales");
     } finally {
       $("staffcleanup-scan").disabled = false;
@@ -3194,7 +3194,7 @@
       : `<tr class="empty-row"><td colspan="6">No periods closed yet</td></tr>`;
     tb.querySelectorAll("[data-reopen-period]").forEach((btn) =>
       btn.addEventListener("click", async () => {
-        if (!confirm("Reopen this period? Staff will be able to edit or delete records dated inside it again.")) return;
+        if (!confirm("Reopen this period? Employees will be able to edit or delete records dated inside it again.")) return;
         const { error: delErr } = await sb.from("period_closures").delete().eq("id", btn.dataset.reopenPeriod);
         if (delErr) return toast(delErr.message, true);
         toast("Period reopened");
