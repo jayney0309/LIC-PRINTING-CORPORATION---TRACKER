@@ -364,7 +364,7 @@
 
     <!-- ======================= PETTY CASH VOUCHERS ======================= -->
     <section id="view-pettycash" class="view">
-      <p class="section-note">A log of cash advanced to a liaison/messenger — not an expense by itself. When the staff spends it, they submit the actual receipt and that gets entered as its own expense (with a real category, TIN, etc.) through the normal Daily Expenses form, separately. This list is a record of who's holding company cash and when it was issued — it's not counted in the Expenses Report or Income Statement.</p>
+      <p class="section-note">A log of all petty cash vouchers issued — not an expense by itself. The actual expense gets entered separately (with a real receipt) through the Daily Expenses form once it's accounted for. Not counted in the Expenses Report or Income Statement.</p>
       <div class="panel">
         <div class="panel-head"><h2 id="pettycash-form-title">Log a petty cash voucher</h2></div>
         <form id="pettycash-form" class="form-grid">
@@ -390,6 +390,20 @@
 
       <div class="panel">
         <div class="panel-head"><h2>Vouchers</h2></div>
+        <div class="filters">
+          <div class="field"><label>From</label><input type="date" id="pettycash-f-from" /></div>
+          <div class="field"><label>To</label><input type="date" id="pettycash-f-to" /></div>
+          <div class="field"><label>Staff</label><input id="pettycash-f-staff" placeholder="Staff name..." /></div>
+          <div class="field"><label>Entity</label>
+            <select id="pettycash-f-entity">
+              <option value="">All</option>
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship</option>
+              <option value="CORPORATION">Corporation</option>
+            </select>
+          </div>
+          <button class="btn small accent" id="pettycash-f-apply">Search</button>
+          <button class="btn small ghost" id="pettycash-f-clear">Clear</button>
+        </div>
         <div class="table-wrap"><table class="data" id="pettycash-table">
           <thead><tr>
             <th>Entity</th><th>Date issued</th><th>Staff</th><th class="num">Amount</th><th>Particulars</th><th>Remarks</th><th>Actions</th>
@@ -571,6 +585,19 @@
         <div class="table-wrap"><table class="data" id="opsreport-expdetail-table">
           <thead><tr>
             <th>Date</th><th>Business</th><th>Category</th><th class="num">Amount</th><th>Mode</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Petty cash vouchers issued for the period</h2>
+        </div>
+        <p class="section-note">Cash advanced to staff, not yet an expense — the actual expense is entered separately once accounted for with a receipt. Not included in the totals above.</p>
+        <div class="table-wrap"><table class="data" id="opsreport-pettycash-table">
+          <thead><tr>
+            <th>Date issued</th><th>Entity</th><th>Staff</th><th class="num">Amount</th><th>Particulars</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>

@@ -1495,7 +1495,7 @@
   }
 
   /* =====================================================================
-     PETTY CASH VOUCHERS (liaison/messenger reimbursements)
+     PETTY CASH VOUCHERS (log of cash advanced to staff)
      ===================================================================== */
   function initPettyCashForm() {
     $("pettycash-date").value = todayISO();
@@ -1520,6 +1520,19 @@
       loadPettyCash();
     });
     $("pettycash-cancel-edit").addEventListener("click", resetPettyCashForm);
+    $("pettycash-f-apply").addEventListener("click", loadPettyCash);
+    $("pettycash-f-clear").addEventListener("click", () => {
+      $("pettycash-f-from").value = "";
+      $("pettycash-f-to").value = "";
+      $("pettycash-f-staff").value = "";
+      $("pettycash-f-entity").value = "";
+      loadPettyCash();
+    });
+    $("pettycash-f-entity").addEventListener("change", loadPettyCash);
+    ["pettycash-f-from", "pettycash-f-to"].forEach((id) => $(id).addEventListener("change", loadPettyCash));
+    $("pettycash-f-staff").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); loadPettyCash(); }
+    });
   }
   function resetPettyCashForm() {
     $("pettycash-form").reset();
@@ -1530,7 +1543,16 @@
   }
   async function loadPettyCash() {
     if (!requireDb()) return;
-    const { data, error } = await sb.from("petty_cash_vouchers").select("*").order("trx_date", { ascending: false }).limit(500);
+    const from = $("pettycash-f-from").value;
+    const to = $("pettycash-f-to").value;
+    const staff = $("pettycash-f-staff").value.trim();
+    const entity = $("pettycash-f-entity").value;
+    let q = sb.from("petty_cash_vouchers").select("*").order("trx_date", { ascending: false });
+    if (from) q = q.gte("trx_date", from);
+    if (to) q = q.lte("trx_date", to);
+    if (staff) q = q.ilike("staff_name", `%${staff}%`);
+    if (entity) q = q.eq("business_entity", entity);
+    const { data, error } = await q.limit(2000);
     if (error) return toast(error.message, true);
     const rows = data || [];
     const tb = $("pettycash-table").querySelector("tbody");
@@ -1543,7 +1565,7 @@
             <button class="btn small danger" data-del-pc="${r.id}">Del</button>
           </td>
         </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="7">No petty cash vouchers logged yet</td></tr>`;
+      : `<tr class="empty-row"><td colspan="7">No petty cash vouchers match these filters</td></tr>`;
     tb.querySelectorAll("[data-edit-pc]").forEach((btn) =>
       btn.addEventListener("click", () => editPettyCash(rows.find((r) => String(r.id) === btn.dataset.editPc)))
     );
@@ -2120,13 +2142,17 @@
     if (entity) salesQuery = salesQuery.eq("business_entity", entity);
     let expQuery = sb.from("expenses").select("trx_date,amount,mode_of_payment,category,business_name,business_entity").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null);
     if (entity) expQuery = expQuery.eq("business_entity", entity);
+    let pettyCashQuery = sb.from("petty_cash_vouchers").select("trx_date,staff_name,amount,particulars,business_entity").gte("trx_date", from).lte("trx_date", to);
+    if (entity) pettyCashQuery = pettyCashQuery.eq("business_entity", entity);
 
-    const [{ data: sales, error: sErr }, { data: exp, error: eErr }] = await Promise.all([
+    const [{ data: sales, error: sErr }, { data: exp, error: eErr }, { data: pettyCash, error: pcErr }] = await Promise.all([
       salesQuery,
       expQuery,
+      pettyCashQuery,
     ]);
     if (sErr) return toast(sErr.message, true);
     if (eErr) return toast(eErr.message, true);
+    if (pcErr) return toast(pcErr.message, true);
 
     const sum = (rows, key) => (rows || []).reduce((a, r) => a + Number(r[key] || 0), 0);
     const totalSales = sum(sales, "total_amount");
@@ -2316,6 +2342,20 @@
           <td>${escapeHtml(r.category || "")}</td><td class="num">₱ ${fmtMoney(r.amount)}</td><td>${escapeHtml(r.mode_of_payment || "")}</td>
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="5">No expenses in this period</td></tr>`;
+
+    // ---- petty cash vouchers issued for the period (cash advanced, not yet
+    // an expense — see the Petty Cash Voucher page) ----
+    const pcTb = $("opsreport-pettycash-table").querySelector("tbody");
+    const pettyCashRows = [...(pettyCash || [])].sort((a, b) => (a.trx_date || "").localeCompare(b.trx_date || ""));
+    pcTb.innerHTML = pettyCashRows.length
+      ? pettyCashRows.map((r) => `<tr>
+          <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(entityLabel(r.business_entity))}</td>
+          <td>${escapeHtml(r.staff_name || "")}</td><td class="num">₱ ${fmtMoney(r.amount)}</td><td>${escapeHtml(r.particulars || "")}</td>
+        </tr>`).join("") + `<tr>
+          <td colspan="3"><strong>TOTAL</strong></td>
+          <td class="num"><strong>₱ ${fmtMoney(sum(pettyCashRows, "amount"))}</strong></td><td></td>
+        </tr>`
+      : `<tr class="empty-row"><td colspan="5">No petty cash vouchers issued in this period</td></tr>`;
   }
 
   /* =====================================================================
