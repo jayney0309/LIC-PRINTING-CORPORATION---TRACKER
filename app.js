@@ -118,7 +118,7 @@
   // ---------------------------------------------------------------- auth gate
   let bootedAfterAuth = false;
 
-  const ADMIN_ONLY_VIEWS = ["invoices", "expensesreport", "withholding", "reports", "incomestatement", "audit"];
+  const ADMIN_ONLY_VIEWS = ["invoices", "salessearch", "expensesreport", "withholding", "reports", "incomestatement", "audit", "commission", "staff"];
   let currentRole = "staff";
 
   // Daily Sales and Daily Expenses each have two locked-entity nav entries
@@ -177,6 +177,7 @@
       ? `Signed in as ${session.user.email} (${currentRole === "admin" ? "Administrator" : "Employee"})`
       : "";
     $("nav-admin-group").style.display = currentRole === "admin" ? "" : "none";
+    $("nav-settings-group").style.display = currentRole === "admin" ? "" : "none";
     if (!bootedAfterAuth) {
       bootedAfterAuth = true;
       loadDashboard();
@@ -233,14 +234,14 @@
   }
 
   // ---------------------------------------------------------------- nav
-  const views = ["dashboard", "sales", "expenses", "pettycash", "receivables", "bills", "opsreport", "commission", "staff", "invoices", "expensesreport", "withholding", "reports", "incomestatement", "audit"];
+  const views = ["dashboard", "sales", "expenses", "pettycash", "receivables", "bills", "opsreport", "commission", "staff", "invoices", "salessearch", "expensesreport", "withholding", "reports", "incomestatement", "audit"];
   const titles = {
     dashboard: "Dashboard",
     "sales-sp": "Daily Sales — LIC Printing Shop", "sales-corp": "Daily Sales — LIC Printing Corporation",
     "expenses-sp": "Daily Expenses — LIC Printing Shop", "expenses-corp": "Daily Expenses — LIC Printing Corporation",
     pettycash: "Petty Cash Vouchers",
-    receivables: "Receivables", bills: "Bill Tracker", opsreport: "Daily Operations Report", commission: "Commission", staff: "Staff",
-    invoices: "Sales Report", expensesreport: "Expenses Report", withholding: "2307 Register", reports: "Reports", incomestatement: "Income Statement",
+    receivables: "Receivables", bills: "Bill Tracker", opsreport: "Daily Operations Report", commission: "Commission", staff: "Employees",
+    invoices: "Sales Report", salessearch: "Sales Search", expensesreport: "Expenses Report", withholding: "2307 Register", reports: "Reports", incomestatement: "Income Statement",
     audit: "Audit & Integrity",
   };
   const loaded = {};
@@ -250,7 +251,7 @@
     "expenses-sp": loadExpenses, "expenses-corp": loadExpenses,
     pettycash: loadPettyCash,
     receivables: loadReceivables, bills: loadBills, opsreport: loadOpsReport, commission: loadCommissions, staff: loadStaff,
-    invoices: loadInvoices, expensesreport: loadExpensesReport, withholding: loadWithholding, reports: loadReports, incomestatement: loadIncomeStatement,
+    invoices: loadInvoices, salessearch: loadSalesSearch, expensesreport: loadExpensesReport, withholding: loadWithholding, reports: loadReports, incomestatement: loadIncomeStatement,
     audit: loadAuditView,
   };
 
@@ -1821,6 +1822,56 @@
   }
 
   /* =====================================================================
+     SALES SEARCH — every logged sale (both entities, with or without a BIR
+     receipt yet), searchable by Xero invoice no. or BIR receipt no. This
+     reads straight from `sales` (via v_sales_status), unlike the Sales
+     Report tab which only ever holds rows that already have a BIR receipt.
+     ===================================================================== */
+  function initSalesSearchForm() {
+    $("salessearch-f-apply").addEventListener("click", loadSalesSearch);
+    $("salessearch-f-invoice").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); loadSalesSearch(); }
+    });
+    ["salessearch-f-from", "salessearch-f-to", "salessearch-f-entity"].forEach((id) => $(id).addEventListener("change", loadSalesSearch));
+    $("salessearch-f-clear").addEventListener("click", () => {
+      $("salessearch-f-invoice").value = "";
+      $("salessearch-f-from").value = "";
+      $("salessearch-f-to").value = "";
+      $("salessearch-f-entity").value = "";
+      loadSalesSearch();
+    });
+  }
+  async function loadSalesSearch() {
+    if (!requireDb()) return;
+    const term = $("salessearch-f-invoice").value.trim();
+    const from = $("salessearch-f-from").value;
+    const to = $("salessearch-f-to").value;
+    const entity = $("salessearch-f-entity").value;
+    const tb = $("salessearch-table").querySelector("tbody");
+    if (!term && !from && !to && !entity) {
+      tb.innerHTML = `<tr class="empty-row"><td colspan="10">Enter an invoice number (Xero or BIR) or a date range to search</td></tr>`;
+      return;
+    }
+    let q = sb.from("v_sales_status").select("*").order("trx_date", { ascending: false });
+    if (term) q = q.or(`invoice_no.ilike.%${term}%,bir_receipt_no.ilike.%${term}%`);
+    if (from) q = q.gte("trx_date", from);
+    if (to) q = q.lte("trx_date", to);
+    if (entity) q = q.eq("business_entity", entity);
+    const { data, error } = await q.limit(500);
+    if (error) return toast(error.message, true);
+    const rows = data || [];
+    tb.innerHTML = rows.length
+      ? rows.map((r) => `<tr>
+          <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.tradename)}</td><td>${escapeHtml(r.reference_person || "")}</td>
+          <td>${escapeHtml(entityLabel(r.business_entity))}</td>
+          <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.amount_received)}</td>
+          <td class="num">₱ ${fmtMoney(r.balance)}</td><td>${statusBadge(r.status)}</td>
+          <td>${escapeHtml(r.invoice_no || "")}</td><td>${escapeHtml(r.bir_receipt_no || "")}</td>
+        </tr>`).join("")
+      : `<tr class="empty-row"><td colspan="10">No sales match this search</td></tr>`;
+  }
+
+  /* =====================================================================
      EXPENSES REPORT (Tax & Compliance) — all logged expenses, both entities
      ===================================================================== */
   let lastExpReportRows = [];
@@ -2362,23 +2413,76 @@
      COMMISSION -- its own tab so pending approvals are never hidden behind
      whatever date range the Daily Operations Report happens to be on.
      ===================================================================== */
+  // DENNIS is LIC Printing Shop's actual owner -- not commission-eligible
+  // staff -- and was seeded into the Employees list very early on
+  // (schema.sql still lists him as active today) even though that's what he
+  // is. "WALK IN" and anything starting with "LIC" (LIC, LIC CLIENT, LIC
+  // NEW CUSTOMER, LIC REPEAT CUSTOMER/CLIENT, LIC PRINTING SHOP, ...) are
+  // the same kind of thing -- a placeholder that leaked into the Staff
+  // field on old sales instead of a real employee's name, standing in for
+  // the company itself rather than any one person. None of those are
+  // commission-eligible either. Matched as a PREFIX ("starts with LIC"),
+  // not "contains LIC" -- a real employee's name could contain those
+  // letters (e.g. ALICIA) without being a "LIC ..." placeholder.
+  // This only hides them from the two Commission-tab employee pickers
+  // below; it doesn't touch the Employees tab itself or the Staff dropdown
+  // used when logging a sale -- deactivate/delete the DENNIS row there
+  // directly if it shouldn't exist at all.
+  function isNonEmployeeStaffPlaceholder(name) {
+    const n = (name || "").trim().toUpperCase();
+    return n === "WALK IN" || n === "DENNIS" || n.startsWith("LIC");
+  }
+  // Both the Commission filter row and the Reconcile panel below need an
+  // up-to-date "pick an employee" list -- shared loader so the staff table
+  // is only queried once per Commission view visit. `force` re-fetches even
+  // if already loaded (used after Employees are edited elsewhere).
+  let employeeOptionsLoaded = false;
+  async function populateEmployeeSelects(force) {
+    if (!sb) return;
+    if (employeeOptionsLoaded && !force) return;
+    const { data } = await sb.from("staff").select("name").eq("active", true).order("name");
+    const names = (data || []).map((s) => s.name).filter((n) => !isNonEmployeeStaffPlaceholder(n));
+    [{ id: "commission-f-employee", allLabel: "All" }, { id: "reconcile-employee", allLabel: "Choose an employee…" }].forEach(({ id, allLabel }) => {
+      const el = $(id);
+      if (!el) return;
+      const current = el.value;
+      el.innerHTML = `<option value="">${allLabel}</option>` + names.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+      el.value = current;
+    });
+    employeeOptionsLoaded = true;
+  }
   function initCommissionForm() {
+    populateEmployeeSelects();
     $("commission-f-apply").addEventListener("click", loadCommissions);
-    ["commission-f-status", "commission-f-entity"].forEach((id) => $(id).addEventListener("change", loadCommissions));
+    ["commission-f-status", "commission-f-entity", "commission-f-paid", "commission-f-employee"].forEach((id) => $(id).addEventListener("change", loadCommissions));
     $("commission-f-search").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); loadCommissions(); }
     });
     $("commission-f-clear").addEventListener("click", () => {
       $("commission-f-status").value = "pending";
+      $("commission-f-paid").value = "";
       $("commission-f-entity").value = "";
+      $("commission-f-employee").value = "";
       $("commission-f-search").value = "";
       loadCommissions();
+    });
+    $("reconcile-apply").addEventListener("click", loadCommissionReconcile);
+    $("reconcile-employee").addEventListener("change", loadCommissionReconcile);
+    ["reconcile-from", "reconcile-to"].forEach((id) => $(id).addEventListener("change", loadCommissionReconcile));
+    $("reconcile-clear").addEventListener("click", () => {
+      $("reconcile-employee").value = "";
+      $("reconcile-from").value = "";
+      $("reconcile-to").value = "";
+      loadCommissionReconcile();
     });
   }
   async function loadCommissions() {
     if (!requireDb()) return;
+    await populateEmployeeSelects();
     const status = $("commission-f-status").value;
+    const paid = $("commission-f-paid").value;
     const entity = $("commission-f-entity").value;
+    const employee = $("commission-f-employee").value;
     const search = $("commission-f-search").value.trim();
     // Embed the linked sale so the Xero invoice no., tradename and amount
     // received show up here without duplicating those columns onto
@@ -2386,8 +2490,21 @@
     let q = sb.from("staff_commissions").select("*, sales(tradename, invoice_no, amount_received)")
       .order("status", { ascending: true }).order("trx_date", { ascending: false }).limit(500);
     if (status) q = q.eq("status", status);
+    if (paid === "unpaid") q = q.is("paid_at", null);
+    if (paid === "paid") q = q.not("paid_at", "is", null);
     if (entity) q = q.eq("business_entity", entity);
+    if (employee) q = q.eq("staff_name", employee);
     if (search) q = q.ilike("staff_name", `%${search}%`);
+    // "Staff" on old, bulk-imported sales sometimes holds a placeholder
+    // instead of an actual employee ("WALK IN", anything starting with
+    // "LIC" -- the company itself, not a person -- or "DENNIS", the
+    // owner) -- if that sale happened to be fully paid, the auto-commission
+    // trigger created a row for it same as for a real employee. Filtered
+    // out here so none of these ever show up as if someone's owed a
+    // commission. "LIC%" is a starts-with match, not "contains" -- doesn't
+    // catch a real employee whose name happens to contain those letters
+    // (e.g. ALICIA).
+    q = q.not("staff_name", "ilike", "WALK IN").not("staff_name", "ilike", "LIC%").not("staff_name", "ilike", "DENNIS");
     const { data, error } = await q;
     if (error) return toast(error.message, true);
     let rows = data || [];
@@ -2407,11 +2524,15 @@
           <td class="num">₱ ${fmtMoney(c.sale_total)}</td><td class="num">₱ ${fmtMoney(c.sales?.amount_received)}</td>
           <td class="num">₱ ${fmtMoney(c.commission_amount)}</td>
           <td>${c.status === "approved" ? statusBadge("FULLY PAID") : statusBadge("UNPAID")}${c.needs_review ? ' <span class="badge warn">changed since approval</span>' : ""}</td>
+          <td>${c.paid_at ? statusBadge("FULLY PAID") : statusBadge("UNPAID")}</td>
+          <td>${c.paid_at ? fmtDate(c.paid_at) : ""}</td>
           <td class="row-actions">
             ${currentRole === "admin" && c.status !== "approved" ? `<button class="btn small accent" data-approve-comm="${c.id}">Approve</button>` : ""}
+            ${currentRole === "admin" && c.status === "approved" && !c.paid_at ? `<button class="btn small accent" data-mark-paid="${c.id}">Mark paid</button>` : ""}
+            ${currentRole === "admin" && c.paid_at ? `<button class="btn small ghost" data-unmark-paid="${c.id}">Undo paid</button>` : ""}
           </td>
         </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="10">No commissions match these filters</td></tr>`;
+      : `<tr class="empty-row"><td colspan="12">No commissions match these filters</td></tr>`;
     tb.querySelectorAll("[data-approve-comm]").forEach((btn) =>
       btn.addEventListener("click", async () => {
         const { data: { user } } = await sb.auth.getUser();
@@ -2423,6 +2544,104 @@
         loadCommissions();
       })
     );
+    tb.querySelectorAll("[data-mark-paid]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        const dateStr = prompt("Date paid (YYYY-MM-DD):", todayISO());
+        if (dateStr === null) return;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) return toast("Enter the date as YYYY-MM-DD", true);
+        const { data: { user } } = await sb.auth.getUser();
+        const { error: err2 } = await sb.from("staff_commissions").update({
+          paid_at: dateStr.trim(), paid_by: user?.email || null,
+        }).eq("id", btn.dataset.markPaid);
+        if (err2) return toast(err2.message, true);
+        toast("Marked as paid");
+        loadCommissions();
+      })
+    );
+    tb.querySelectorAll("[data-unmark-paid]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        if (!confirm("Undo the paid mark on this commission?")) return;
+        const { error: err2 } = await sb.from("staff_commissions").update({
+          paid_at: null, paid_by: null,
+        }).eq("id", btn.dataset.unmarkPaid);
+        if (err2) return toast(err2.message, true);
+        toast("Paid mark removed");
+        loadCommissions();
+      })
+    );
+  }
+
+  // Consolidates ALL of one employee's sales -- not just ones that made it
+  // into staff_commissions -- so a mismatch (sale fully paid, but no
+  // commission row for it) can be spotted. "Staff" is picked from the
+  // Employees list, so placeholder values that sometimes ended up in the
+  // Staff field on old sales instead of a real name ("WALK IN", "LIC REPEAT
+  // CUSTOMER" / "LIC REPEAT CLIENT", "DENNIS") never show up as a
+  // selectable employee here in the first place -- excluded automatically,
+  // not by filtering the sale's tradename/customer, which is a different
+  // field and shouldn't be touched by this.
+  async function loadCommissionReconcile() {
+    if (!requireDb()) return;
+    await populateEmployeeSelects();
+    const employee = $("reconcile-employee").value;
+    const from = $("reconcile-from").value;
+    const to = $("reconcile-to").value;
+    const tb = $("reconcile-table").querySelector("tbody");
+    const summary = $("reconcile-summary");
+    if (!employee) {
+      tb.innerHTML = `<tr class="empty-row"><td colspan="9">Pick an employee above to run this check</td></tr>`;
+      summary.textContent = "";
+      return;
+    }
+    let q = sb.from("v_sales_status").select("*")
+      .ilike("reference_person", employee)
+      .eq("is_walkin", false)
+      .order("trx_date", { ascending: false })
+      .limit(2000);
+    if (from) q = q.gte("trx_date", from);
+    if (to) q = q.lte("trx_date", to);
+    const { data: sales, error } = await q;
+    if (error) return toast(error.message, true);
+    const rows = sales || [];
+    const saleIds = rows.map((s) => s.id);
+    const commBySale = {};
+    if (saleIds.length) {
+      const { data: comms, error: commErr } = await sb.from("staff_commissions").select("*").in("sale_id", saleIds);
+      if (commErr) return toast(commErr.message, true);
+      (comms || []).forEach((c) => (commBySale[c.sale_id] = c));
+    }
+    let claimed = 0, missing = 0, notYet = 0;
+    tb.innerHTML = rows.length
+      ? rows.map((s) => {
+          const c = commBySale[s.id];
+          let commHtml, commAmount;
+          if (c) {
+            claimed++;
+            commAmount = c.commission_amount;
+            commHtml = c.paid_at ? `<span class="badge good">Paid ${fmtDate(c.paid_at)}</span>`
+              : c.status === "approved" ? `<span class="badge warn">Approved, unpaid</span>`
+              : `<span class="badge warn">Pending approval</span>`;
+          } else if (s.status === "FULLY PAID") {
+            missing++;
+            commAmount = Number(s.total_amount || 0) * 0.10;
+            commHtml = `<span class="badge bad">No commission record</span>`;
+          } else {
+            notYet++;
+            commAmount = Number(s.total_amount || 0) * 0.10;
+            commHtml = `<span class="badge neutral">Not fully paid yet</span>`;
+          }
+          return `<tr>
+              <td>${fmtDate(s.trx_date)}</td><td>${escapeHtml(entityLabel(s.business_entity))}</td>
+              <td>${escapeHtml(s.tradename)}</td><td>${escapeHtml(s.invoice_no || "")}</td>
+              <td class="num">₱ ${fmtMoney(s.total_amount)}</td><td class="num">₱ ${fmtMoney(s.amount_received)}</td>
+              <td>${statusBadge(s.status)}</td><td class="num">₱ ${fmtMoney(commAmount)}</td>
+              <td>${commHtml}</td>
+            </tr>`;
+        }).join("")
+      : `<tr class="empty-row"><td colspan="9">No qualifying sales found for this employee in this period</td></tr>`;
+    summary.textContent = rows.length
+      ? `${rows.length} qualifying sale(s) for ${employee} — ${claimed} with a commission record, ${missing} fully paid but missing one, ${notYet} not fully paid yet.`
+      : "";
   }
 
   /* =====================================================================
@@ -2432,15 +2651,36 @@
     $("staff-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!requireDb()) return;
+      const id = $("staff-id").value;
       const name = $("staff-name").value.trim();
       if (!name) return;
-      const { error } = await sb.from("staff").insert({ name });
+      let error;
+      if (id) ({ error } = await sb.from("staff").update({ name }).eq("id", id));
+      else ({ error } = await sb.from("staff").insert({ name }));
       if (error) return toast(error.message, true);
-      toast("Staff added");
-      $("staff-form").reset();
+      toast(id ? "Employee renamed" : "Employee added");
+      resetStaffForm();
       loadStaff();
       refreshDatalists();
+      populateEmployeeSelects(true);
     });
+    $("staff-cancel-edit").addEventListener("click", resetStaffForm);
+  }
+  function resetStaffForm() {
+    $("staff-form").reset();
+    $("staff-id").value = "";
+    $("staff-form-title").textContent = "Add employee";
+    $("staff-submit").textContent = "Add employee";
+    $("staff-cancel-edit").style.display = "none";
+  }
+  function editStaff(r) {
+    if (!r) return;
+    $("staff-id").value = r.id;
+    $("staff-name").value = r.name;
+    $("staff-form-title").textContent = "Rename employee";
+    $("staff-submit").textContent = "Save name";
+    $("staff-cancel-edit").style.display = "inline-block";
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
   async function loadStaff() {
     if (!requireDb()) return;
@@ -2452,11 +2692,15 @@
           <td>${escapeHtml(r.name)}</td>
           <td><span class="badge ${r.active ? "good" : "neutral"}">${r.active ? "ACTIVE" : "INACTIVE"}</span></td>
           <td class="row-actions">
+            <button class="btn small" data-edit-staff="${r.id}">Edit</button>
             <button class="btn small" data-toggle-staff="${r.id}" data-active="${r.active}">${r.active ? "Deactivate" : "Reactivate"}</button>
             <button class="btn small danger" data-del-staff="${r.id}">Delete</button>
           </td>
         </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="3">No staff added yet</td></tr>`;
+      : `<tr class="empty-row"><td colspan="3">No employees added yet</td></tr>`;
+    tb.querySelectorAll("[data-edit-staff]").forEach((btn) =>
+      btn.addEventListener("click", () => editStaff(rows.find((r) => String(r.id) === btn.dataset.editStaff)))
+    );
     tb.querySelectorAll("[data-toggle-staff]").forEach((btn) =>
       btn.addEventListener("click", async () => {
         if (!requireDb()) return;
@@ -2464,9 +2708,10 @@
         const nowActive = btn.dataset.active !== "true";
         const { error } = await sb.from("staff").update({ active: nowActive }).eq("id", id);
         if (error) return toast(error.message, true);
-        toast(nowActive ? "Staff reactivated" : "Staff deactivated");
+        toast(nowActive ? "Employee reactivated" : "Employee deactivated");
         loadStaff();
         refreshDatalists();
+        populateEmployeeSelects(true);
       })
     );
     tb.querySelectorAll("[data-del-staff]").forEach((btn) =>
@@ -2811,6 +3056,7 @@
   initExpensesDedupe();
   initBillsForm();
   initInvoicesForm();
+  initSalesSearchForm();
   initExpensesReportForm();
   initWithholdingForm();
   initOpsReportForm();

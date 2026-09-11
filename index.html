@@ -46,8 +46,12 @@
       <button class="nav-btn" data-view="receivables"><span class="ic">&#9755;</span> Receivables</button>
       <button class="nav-btn" data-view="bills"><span class="ic">&#9755;</span> Bill Tracker</button>
       <button class="nav-btn" data-view="opsreport"><span class="ic">&#9755;</span> Report</button>
-      <button class="nav-btn" data-view="commission"><span class="ic">&#9755;</span> Commission</button>
-      <button class="nav-btn" data-view="staff"><span class="ic">&#9755;</span> Staff</button>
+
+      <div id="nav-settings-group">
+        <div class="nav-group-label">Settings</div>
+        <button class="nav-btn" data-view="commission"><span class="ic">&#9755;</span> Commission</button>
+        <button class="nav-btn" data-view="staff"><span class="ic">&#9755;</span> Employees</button>
+      </div>
 
       <div id="nav-admin-group">
         <div class="nav-group-label">Tax &amp; compliance (5JS)</div>
@@ -606,7 +610,7 @@
 
     <!-- ======================= COMMISSION ======================= -->
     <section id="view-commission" class="view">
-      <p class="section-note">10% of each fully-paid sale with a staff member assigned, auto-computed — still needs an admin to approve before it's final. Not limited to a date range; every commission still waiting for approval shows up here regardless of when the sale happened.</p>
+      <p class="section-note">10% of each fully-paid sale with a staff member assigned, auto-computed — still needs an admin to approve before it's final, and is only actually handed to the staff member once marked Paid. Not limited to a date range; every commission still waiting for approval shows up here regardless of when the sale happened.</p>
       <div class="panel">
         <div class="filters">
           <div class="field"><label>Status</label>
@@ -614,6 +618,13 @@
               <option value="pending">For approval</option>
               <option value="approved">Claimed / approved</option>
               <option value="">All</option>
+            </select>
+          </div>
+          <div class="field"><label>Payment</label>
+            <select id="commission-f-paid">
+              <option value="">All</option>
+              <option value="unpaid">Unpaid</option>
+              <option value="paid">Paid</option>
             </select>
           </div>
           <div class="field"><label>Entity</label>
@@ -630,29 +641,31 @@
         <div class="table-wrap"><table class="data" id="commission-table">
           <thead><tr>
             <th>Date</th><th>Entity</th><th>Xero Invoice</th><th>Tradename</th><th>Staff</th>
-            <th class="num">Total</th><th class="num">Received</th><th class="num">Commission</th><th>Status</th><th>Actions</th>
+            <th class="num">Total</th><th class="num">Received</th><th class="num">Commission</th><th>Status</th><th>Paid</th><th>Date Paid</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
         </table></div>
       </div>
     </section>
 
-    <!-- ======================= STAFF ======================= -->
+    <!-- ======================= STAFF / EMPLOYEES ======================= -->
     <section id="view-staff" class="view">
-      <p class="section-note">Manage who shows up in the Staff dropdown when logging a sale. Deactivating keeps all of that person's past sales and report totals intact — only delete a row if you're sure you don't need it anymore.</p>
+      <p class="section-note">Manage who shows up in the Staff dropdown when logging a sale. Renaming someone here only changes how their name displays going forward on this list — past sales, commissions and petty cash vouchers already saved under their old name keep that old name and won't be relinked automatically. Deactivating keeps all of that person's past sales and report totals intact — only delete a row if you're sure you don't need it anymore.</p>
       <div class="panel">
-        <div class="panel-head"><h2>Add staff</h2></div>
+        <div class="panel-head"><h2 id="staff-form-title">Add employee</h2></div>
         <form id="staff-form" class="form-grid">
+          <input type="hidden" id="staff-id" />
           <div class="field wide"><label>Name</label><input id="staff-name" required placeholder="e.g. JUAN DELA CRUZ" /></div>
           <div class="form-actions wide">
-            <button type="submit" class="btn primary">Add staff</button>
+            <button type="submit" class="btn primary" id="staff-submit">Add employee</button>
+            <button type="button" class="btn ghost" id="staff-cancel-edit" style="display:none;">Cancel edit</button>
             <span class="hint" id="staff-form-msg"></span>
           </div>
         </form>
       </div>
 
       <div class="panel">
-        <div class="panel-head"><h2>Staff list</h2></div>
+        <div class="panel-head"><h2>Employees</h2></div>
         <div class="table-wrap"><table class="data" id="staff-table">
           <thead><tr>
             <th>Name</th><th>Status</th><th>Actions</th>
