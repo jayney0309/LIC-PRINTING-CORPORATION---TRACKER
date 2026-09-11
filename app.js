@@ -274,7 +274,6 @@
         $("sales-entity-label").textContent = fullEntityLabel(currentSalesEntity);
         updateSalesFormForEntity();
         checkCorpVatThreshold();
-        loadCashCountForDate();
       } else {
         currentExpensesEntity = nav.entity;
         $("expenses-entity").value = currentExpensesEntity;
@@ -821,14 +820,17 @@
      ===================================================================== */
   function initCashCountForm() {
     $("cashcount-date").value = todayISO();
+    $("cashcount-entity").value = currentSalesEntity;
     $("cashcount-date").addEventListener("change", loadCashCountForDate);
+    $("cashcount-entity").addEventListener("change", loadCashCountForDate);
     $("cashcount-save").addEventListener("click", saveCashCount);
   }
   async function loadCashCountForDate() {
     if (!sb) return;
     const date = $("cashcount-date").value || todayISO();
+    const entity = $("cashcount-entity").value || "SOLE PROPRIETORSHIP";
     const { data } = await sb.from("daily_cash_counts").select("*")
-      .eq("business_entity", currentSalesEntity).eq("count_date", date).maybeSingle();
+      .eq("business_entity", entity).eq("count_date", date).maybeSingle();
     $("cashcount-cash").value = data ? data.counted_cash : "";
     $("cashcount-gcash").value = data ? data.counted_gcash : "";
     $("cashcount-other").value = data ? data.counted_other : "";
@@ -837,12 +839,13 @@
   async function saveCashCount() {
     if (!requireDb()) return;
     const date = $("cashcount-date").value || todayISO();
+    const entity = $("cashcount-entity").value || "SOLE PROPRIETORSHIP";
     const cash = Number($("cashcount-cash").value || 0);
     const gcash = Number($("cashcount-gcash").value || 0);
     const other = Number($("cashcount-other").value || 0);
     const { data: { user } } = await sb.auth.getUser();
     const { error } = await sb.from("daily_cash_counts").upsert({
-      business_entity: currentSalesEntity,
+      business_entity: entity,
       count_date: date,
       counted_cash: cash,
       counted_gcash: gcash,
@@ -854,7 +857,7 @@
 
     const { data: rows, error: qErr } = await sb.from("sales")
       .select("amount_received,mode_of_payment")
-      .eq("business_entity", currentSalesEntity)
+      .eq("business_entity", entity)
       .eq("trx_date", date)
       .is("deleted_at", null);
     if (qErr) return toast(qErr.message, true);
@@ -2262,6 +2265,7 @@
 
   async function loadOpsReport() {
     if (!requireDb()) return;
+    loadCashCountForDate();
     if (!$("opsreport-from").value) $("opsreport-from").value = todayISO();
     if (!$("opsreport-to").value) $("opsreport-to").value = todayISO();
     const from = $("opsreport-from").value;
@@ -2834,6 +2838,112 @@
     );
   }
 
+  // ---------------------------------------------------------------------
+  // Clean up 2026 sales staff names: 2026 sales can carry a staff name
+  // that's a typo/case/spacing variant of the real employee name (entered
+  // before the Employees tab existed, or just mistyped). This scans 2026
+  // sales for reference_person values that AREN'T an exact match to any
+  // employee, suggests the closest employee by a normalized (trim+upper)
+  // comparison, and lets Jamie confirm each one before anything is
+  // changed. Applying a row updates that sale's reference_person, plus
+  // (scoped the same way -- 2026 only, and only the linked records) its
+  // Commission and Petty Cash rows -- same relinking the Employees-tab
+  // rename does, just triggered from the sales side instead.
+  const STAFFCLEANUP_YEAR_FROM = "2026-01-01";
+  const STAFFCLEANUP_YEAR_TO = "2026-12-31";
+  let staffCleanupRows = []; // [{ recorded, count, employees: [names] }]
+  function initStaffCleanup() {
+    $("staffcleanup-scan").addEventListener("click", scanStaffCleanup);
+    $("staffcleanup-apply").addEventListener("click", applyStaffCleanup);
+  }
+  async function scanStaffCleanup() {
+    if (!requireDb()) return;
+    $("staffcleanup-scan").disabled = true;
+    $("staffcleanup-scan").textContent = "Scanning...";
+    try {
+      const [{ data: staffRows, error: staffErr }, { data: saleRows, error: saleErr }] = await Promise.all([
+        sb.from("staff").select("name,active").order("name"),
+        sb.from("sales").select("reference_person").gte("trx_date", STAFFCLEANUP_YEAR_FROM).lte("trx_date", STAFFCLEANUP_YEAR_TO).is("deleted_at", null),
+      ]);
+      if (staffErr) return toast(staffErr.message, true);
+      if (saleErr) return toast(saleErr.message, true);
+      const employees = (staffRows || []).map((s) => ({ name: s.name, active: s.active }));
+      const employeeNames = new Set(employees.map((e) => e.name));
+      const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
+
+      const counts = {};
+      (saleRows || []).forEach((r) => {
+        const v = (r.reference_person || "").trim();
+        if (!v || isNonEmployeeStaffPlaceholder(v)) return;
+        if (employeeNames.has(v)) return; // already an exact match -- nothing to clean up
+        counts[v] = (counts[v] || 0) + 1;
+      });
+
+      staffCleanupRows = Object.keys(counts).sort().map((recorded) => {
+        const suggestion = employees.find((e) => norm(e.name) === norm(recorded));
+        return { recorded, count: counts[recorded], suggested: suggestion ? suggestion.name : "" };
+      });
+
+      const tb = $("staffcleanup-table").querySelector("tbody");
+      $("staffcleanup-wrap").style.display = "";
+      $("staffcleanup-apply-wrap").style.display = staffCleanupRows.length ? "" : "none";
+      tb.innerHTML = staffCleanupRows.length
+        ? staffCleanupRows.map((row, i) => `<tr>
+            <td>${escapeHtml(row.recorded)}</td>
+            <td class="num">${row.count}</td>
+            <td><select data-cleanup-target="${i}">
+              <option value="">Skip / leave as is</option>
+              ${employees.map((e) => `<option value="${escapeHtml(e.name)}" ${e.name === row.suggested ? "selected" : ""}>${escapeHtml(e.name)}${e.active ? "" : " (inactive)"}</option>`).join("")}
+            </select></td>
+          </tr>`).join("")
+        : `<tr class="empty-row"><td colspan="3">Every staff name on a 2026 sale already matches an employee exactly — nothing to clean up</td></tr>`;
+      if (!staffCleanupRows.length) toast("No mismatches found in 2026 sales");
+    } finally {
+      $("staffcleanup-scan").disabled = false;
+      $("staffcleanup-scan").textContent = "Scan 2026 sales";
+    }
+  }
+  async function applyStaffCleanup() {
+    if (!requireDb()) return;
+    const selects = Array.from($("staffcleanup-table").querySelectorAll("[data-cleanup-target]"));
+    const jobs = selects
+      .map((sel) => ({ row: staffCleanupRows[Number(sel.dataset.cleanupTarget)], target: sel.value }))
+      .filter((j) => j.target && j.row);
+    if (!jobs.length) return toast("Pick at least one employee to rename to", true);
+    $("staffcleanup-apply").disabled = true;
+    $("staffcleanup-apply").textContent = "Applying...";
+    try {
+      let totalSales = 0, totalComm = 0, totalPetty = 0;
+      for (const job of jobs) {
+        const salesRes = await sb.from("sales").update({ reference_person: job.target })
+          .eq("reference_person", job.row.recorded)
+          .gte("trx_date", STAFFCLEANUP_YEAR_FROM).lte("trx_date", STAFFCLEANUP_YEAR_TO)
+          .select("id");
+        if (salesRes.error) { toast(`Failed to rename "${job.row.recorded}": ${salesRes.error.message}`, true); continue; }
+        const saleIds = (salesRes.data || []).map((r) => r.id);
+        totalSales += saleIds.length;
+        if (saleIds.length) {
+          const commRes = await sb.from("staff_commissions").update({ staff_name: job.target })
+            .eq("staff_name", job.row.recorded).in("sale_id", saleIds).select("id");
+          if (commRes.error) toast(`Renamed sales for "${job.row.recorded}", but relinking commissions failed: ${commRes.error.message}`, true);
+          else totalComm += (commRes.data || []).length;
+        }
+        const pettyRes = await sb.from("petty_cash_vouchers").update({ staff_name: job.target })
+          .eq("staff_name", job.row.recorded)
+          .gte("trx_date", STAFFCLEANUP_YEAR_FROM).lte("trx_date", STAFFCLEANUP_YEAR_TO)
+          .select("id");
+        if (pettyRes.error) toast(`Renamed sales for "${job.row.recorded}", but relinking petty cash failed: ${pettyRes.error.message}`, true);
+        else totalPetty += (pettyRes.data || []).length;
+      }
+      toast(`Renamed ${totalSales} 2026 sale(s), ${totalComm} commission(s), ${totalPetty} petty cash voucher(s)`);
+      populateEmployeeSelects(true);
+      scanStaffCleanup();
+    } finally {
+      $("staffcleanup-apply").disabled = false;
+      $("staffcleanup-apply").textContent = "Apply selected renames";
+    }
+  }
+
   /* =====================================================================
      INCOME STATEMENT (Revenue from Issued Invoices, less Expenses)
      ===================================================================== */
@@ -3182,6 +3292,7 @@
   initOpsReportForm();
   initCommissionForm();
   initStaffForm();
+  initStaffCleanup();
   initIncomeStatementForm();
   initCashCountForm();
   initAuditView();

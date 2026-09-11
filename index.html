@@ -124,20 +124,6 @@
       <p class="section-note">Enter a "Tax withheld" amount if the customer withheld EWT before paying you — a matching 2307 (Received) is created automatically in the 2307 Register, so you don't have to enter it twice.</p>
       <p class="section-note" id="sales-vat-threshold-banner" style="display:none;"></p>
       <div class="panel">
-        <div class="panel-head">
-          <h2>Daily cash count</h2>
-          <span class="hint">Count what's actually on hand at closing — this is what catches a sale that never got logged</span>
-        </div>
-        <div class="filters">
-          <div class="field"><label>Date</label><input type="date" id="cashcount-date" /></div>
-          <div class="field"><label>Cash counted</label><input type="number" step="0.01" id="cashcount-cash" placeholder="0.00" /></div>
-          <div class="field"><label>GCash counted</label><input type="number" step="0.01" id="cashcount-gcash" placeholder="0.00" /></div>
-          <div class="field"><label>Other (bank/card) counted</label><input type="number" step="0.01" id="cashcount-other" placeholder="0.00" /></div>
-          <button class="btn small accent" id="cashcount-save">Save &amp; Check</button>
-        </div>
-        <div id="cashcount-result" style="display:none;"></div>
-      </div>
-      <div class="panel">
         <div class="panel-head"><h2 id="sales-form-title">Log a sale</h2></div>
         <form id="sales-form" class="form-grid">
           <input type="hidden" id="sales-id" />
@@ -487,6 +473,28 @@
     <!-- ======================= DAILY OPERATIONS REPORT ======================= -->
     <section id="view-opsreport" class="view">
       <p class="section-note">Cash/sales summary for closing the register, an expenses-by-category breakdown, plus a per-staff breakdown for the period you pick. The Entity filter applies to both Sales and Expenses.</p>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Daily cash count</h2>
+          <span class="hint">Count what's actually on hand at closing — this is what catches a sale that never got logged</span>
+        </div>
+        <div class="filters">
+          <div class="field"><label>Entity</label>
+            <select id="cashcount-entity">
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship</option>
+              <option value="CORPORATION">Corporation</option>
+            </select>
+          </div>
+          <div class="field"><label>Date</label><input type="date" id="cashcount-date" /></div>
+          <div class="field"><label>Cash counted</label><input type="number" step="0.01" id="cashcount-cash" placeholder="0.00" /></div>
+          <div class="field"><label>GCash counted</label><input type="number" step="0.01" id="cashcount-gcash" placeholder="0.00" /></div>
+          <div class="field"><label>Other (bank/card) counted</label><input type="number" step="0.01" id="cashcount-other" placeholder="0.00" /></div>
+          <button class="btn small accent" id="cashcount-save">Save &amp; Check</button>
+        </div>
+        <div id="cashcount-result" style="display:none;"></div>
+      </div>
+
       <div class="panel">
         <div class="filters">
           <div class="field"><label>From</label><input type="date" id="opsreport-from" /></div>
@@ -704,6 +712,26 @@
           </tr></thead>
           <tbody></tbody>
         </table></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Clean up 2026 sales staff names</h2>
+          <span class="hint">Finds staff names recorded on 2026 sales that don't exactly match an employee name above — e.g. a typo or different casing — so you can retitle them to the official name in one go</span>
+        </div>
+        <p class="section-note">Scans <strong>2026 sales only</strong>. A rename here relinks that sale's Commission record and any 2026 Petty Cash Voucher under the same recorded name too — same relinking the Employees rename above does, just scoped to this year and starting from whatever's actually on the sale instead of an employee record.</p>
+        <div class="form-actions"><button type="button" class="btn small accent" id="staffcleanup-scan">Scan 2026 sales</button></div>
+        <div class="table-wrap" id="staffcleanup-wrap" style="display:none; margin-top:10px;">
+          <table class="data" id="staffcleanup-table">
+            <thead><tr>
+              <th>Recorded on sales</th><th class="num"># 2026 sales</th><th>Rename to</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="form-actions" id="staffcleanup-apply-wrap" style="display:none; margin-top:10px;">
+          <button type="button" class="btn primary" id="staffcleanup-apply">Apply selected renames</button>
+        </div>
       </div>
     </section>
 
