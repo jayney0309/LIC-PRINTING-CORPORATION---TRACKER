@@ -1523,6 +1523,8 @@
      ===================================================================== */
   function initPettyCashForm() {
     $("pettycash-date").value = todayISO();
+    const gotoCleanup = document.querySelector("[data-goto-staffcleanup]");
+    if (gotoCleanup) gotoCleanup.addEventListener("click", () => { showView("staff"); scanStaffCleanup(); });
     $("pettycash-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!requireDb()) return;
@@ -2534,6 +2536,7 @@
     });
     employeeOptionsLoaded = true;
   }
+  let lastCommissionRows = [];
   function initCommissionForm() {
     populateEmployeeSelects();
     $("commission-f-apply").addEventListener("click", loadCommissions);
@@ -2549,6 +2552,26 @@
       $("commission-f-search").value = "";
       loadCommissions();
     });
+    document.querySelectorAll("#commission-table [data-sort-comm]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const key = btn.dataset.sortComm;
+        commissionSort = commissionSort && commissionSort.key === key
+          ? { key, dir: commissionSort.dir === "asc" ? "desc" : "asc" }
+          : { key, dir: "asc" };
+        renderCommissionRows();
+      })
+    );
+    $("commission-select-all").addEventListener("change", (e) => {
+      document.querySelectorAll("#commission-table [data-comm-select]").forEach((cb) => (cb.checked = e.target.checked));
+      updateCommissionBulkBar();
+    });
+    $("commission-bulk-date").value = todayISO();
+    $("commission-bulk-clear").addEventListener("click", () => {
+      document.querySelectorAll("#commission-table [data-comm-select]").forEach((cb) => (cb.checked = false));
+      $("commission-select-all").checked = false;
+      updateCommissionBulkBar();
+    });
+    $("commission-bulk-apply").addEventListener("click", applyCommissionBulk);
     $("reconcile-apply").addEventListener("click", loadCommissionReconcile);
     $("reconcile-employee").addEventListener("change", loadCommissionReconcile);
     ["reconcile-from", "reconcile-to"].forEach((id) => $(id).addEventListener("change", loadCommissionReconcile));
@@ -2577,7 +2600,12 @@
     if (paid === "paid") q = q.not("paid_at", "is", null);
     if (entity) q = q.eq("business_entity", entity);
     if (employee) q = q.eq("staff_name", employee);
-    if (search) q = q.ilike("staff_name", `%${search}%`);
+    // Search matches employee name, tradename, or Xero invoice no. -- the
+    // latter two live on the embedded `sales` row, not a column Postgrest
+    // can filter on directly alongside staff_name in one query, so ALL of
+    // this match happens client-side below instead of narrowing here (a
+    // DB-level ilike on staff_name alone would incorrectly hide a row that
+    // only matches on tradename/invoice no.).
     // "Staff" on old, bulk-imported sales sometimes holds a placeholder
     // instead of an actual employee ("WALK IN", anything starting with
     // "LIC" -- the company itself, not a person -- or "DENNIS", the
@@ -2596,11 +2624,42 @@
     // alongside an `ilike` on staff_name in one query.
     if (search) {
       const s = search.toLowerCase();
-      rows = rows.filter((r) => (r.staff_name || "").toLowerCase().includes(s) || (r.sales?.tradename || "").toLowerCase().includes(s));
+      rows = rows.filter((r) =>
+        (r.staff_name || "").toLowerCase().includes(s) ||
+        (r.sales?.tradename || "").toLowerCase().includes(s) ||
+        (r.sales?.invoice_no || "").toLowerCase().includes(s)
+      );
     }
+    lastCommissionRows = rows;
+    renderCommissionRows();
+  }
+  // { key: "trx_date" | "invoice_no", dir: "asc" | "desc" } -- null means
+  // "no manual sort", which keeps the server's default order (pending
+  // before approved, newest sale first). Set by clicking the Date or Xero
+  // Invoice column header; re-renders from the already-fetched
+  // lastCommissionRows so it doesn't need to hit the database again.
+  let commissionSort = null;
+  function renderCommissionRows() {
+    let rows = lastCommissionRows.slice();
+    if (commissionSort) {
+      const { key, dir } = commissionSort;
+      const get = key === "invoice_no" ? (r) => r.sales?.invoice_no || "" : (r) => r.trx_date || "";
+      rows.sort((a, b) => {
+        const av = get(a), bv = get(b);
+        const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true });
+        return dir === "asc" ? cmp : -cmp;
+      });
+    }
+    document.querySelectorAll("#commission-table [data-sort-comm]").forEach((th) => {
+      const key = th.dataset.sortComm;
+      const arrow = th.querySelector(".sort-arrow");
+      if (!arrow) return;
+      arrow.textContent = commissionSort && commissionSort.key === key ? (commissionSort.dir === "asc" ? " ▲" : " ▼") : "";
+    });
     const tb = $("commission-table").querySelector("tbody");
     tb.innerHTML = rows.length
       ? rows.map((c) => `<tr>
+          <td>${currentRole === "admin" ? `<input type="checkbox" data-comm-select="${c.id}" data-comm-status="${c.status}" data-comm-paid="${c.paid_at ? "1" : "0"}" />` : ""}</td>
           <td>${fmtDate(c.trx_date)}</td><td>${escapeHtml(entityLabel(c.business_entity))}</td>
           <td>${escapeHtml(c.sales?.invoice_no || "")}</td><td>${escapeHtml(c.sales?.tradename || "")}</td>
           <td>${escapeHtml(c.staff_name)}</td>
@@ -2615,7 +2674,10 @@
             ${currentRole === "admin" && c.paid_at ? `<button class="btn small ghost" data-unmark-paid="${c.id}">Undo paid</button>` : ""}
           </td>
         </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="12">No commissions match these filters</td></tr>`;
+      : `<tr class="empty-row"><td colspan="13">No commissions match these filters</td></tr>`;
+    $("commission-select-all").checked = false;
+    updateCommissionBulkBar();
+    tb.querySelectorAll("[data-comm-select]").forEach((cb) => cb.addEventListener("change", updateCommissionBulkBar));
     tb.querySelectorAll("[data-approve-comm]").forEach((btn) =>
       btn.addEventListener("click", async () => {
         const { data: { user } } = await sb.auth.getUser();
@@ -2652,6 +2714,50 @@
         loadCommissions();
       })
     );
+  }
+  function updateCommissionBulkBar() {
+    const n = document.querySelectorAll("#commission-table [data-comm-select]:checked").length;
+    $("commission-bulk-bar").style.display = n ? "" : "none";
+    $("commission-bulk-count").textContent = `${n} selected`;
+  }
+  // Bulk-clears a backlog of old commission claims (e.g. everything from
+  // before this system existed, already actually paid out in real life)
+  // in one shot instead of Approve-then-Mark-paid one row at a time:
+  // still-pending selected rows get approved, then every selected row
+  // without a paid_at gets the chosen date -- so a mixed selection of
+  // pending and already-approved-but-unpaid rows both end up
+  // Approved + Paid with a single click.
+  async function applyCommissionBulk() {
+    if (!requireDb()) return;
+    const checked = Array.from(document.querySelectorAll("#commission-table [data-comm-select]:checked"));
+    if (!checked.length) return toast("Select at least one commission first", true);
+    const dateStr = $("commission-bulk-date").value || todayISO();
+    if (!confirm(`Approve & mark ${checked.length} commission(s) as paid on ${dateStr}?`)) return;
+    const ids = checked.map((cb) => cb.dataset.commSelect);
+    const pendingIds = checked.filter((cb) => cb.dataset.commStatus !== "approved").map((cb) => cb.dataset.commSelect);
+    const unpaidIds = checked.filter((cb) => cb.dataset.commPaid !== "1").map((cb) => cb.dataset.commSelect);
+    $("commission-bulk-apply").disabled = true;
+    $("commission-bulk-apply").textContent = "Applying...";
+    try {
+      const { data: { user } } = await sb.auth.getUser();
+      if (pendingIds.length) {
+        const { error } = await sb.from("staff_commissions").update({
+          status: "approved", approved_at: new Date().toISOString(), approved_by: user?.email || null, needs_review: false,
+        }).in("id", pendingIds);
+        if (error) return toast(error.message, true);
+      }
+      if (unpaidIds.length) {
+        const { error } = await sb.from("staff_commissions").update({
+          paid_at: dateStr, paid_by: user?.email || null,
+        }).in("id", unpaidIds);
+        if (error) return toast(error.message, true);
+      }
+      toast(`Approved & marked paid: ${ids.length} commission(s)`);
+      loadCommissions();
+    } finally {
+      $("commission-bulk-apply").disabled = false;
+      $("commission-bulk-apply").textContent = "Approve & mark paid — selected";
+    }
   }
 
   // Consolidates ALL of one employee's sales -- not just ones that made it
@@ -2839,16 +2945,17 @@
   }
 
   // ---------------------------------------------------------------------
-  // Clean up 2026 sales staff names: 2026 sales can carry a staff name
-  // that's a typo/case/spacing variant of the real employee name (entered
-  // before the Employees tab existed, or just mistyped). This scans 2026
-  // sales for reference_person values that AREN'T an exact match to any
-  // employee, suggests the closest employee by a normalized (trim+upper)
-  // comparison, and lets Jamie confirm each one before anything is
-  // changed. Applying a row updates that sale's reference_person, plus
-  // (scoped the same way -- 2026 only, and only the linked records) its
-  // Commission and Petty Cash rows -- same relinking the Employees-tab
-  // rename does, just triggered from the sales side instead.
+  // Clean up 2026 employee names: 2026 Sales and Petty Cash Vouchers can
+  // both carry an employee name that's a typo/case/spacing variant of the
+  // real employee name (entered before the Employees tab existed, or just
+  // mistyped). This scans both tables for names that AREN'T an exact
+  // match to any employee, suggests the closest employee by a normalized
+  // (trim+upper) comparison, and lets Jamie confirm each one before
+  // anything is changed. Applying a row renames it everywhere it was
+  // found -- Sales, that sale's Commission record, and Petty Cash
+  // Vouchers -- same relinking the Employees-tab rename does, just
+  // scoped to this year and starting from whatever's actually recorded
+  // instead of an employee record.
   const STAFFCLEANUP_YEAR_FROM = "2026-01-01";
   const STAFFCLEANUP_YEAR_TO = "2026-12-31";
   let staffCleanupRows = []; // [{ recorded, count, employees: [names] }]
@@ -2861,27 +2968,32 @@
     $("staffcleanup-scan").disabled = true;
     $("staffcleanup-scan").textContent = "Scanning...";
     try {
-      const [{ data: staffRows, error: staffErr }, { data: saleRows, error: saleErr }] = await Promise.all([
+      const [{ data: staffRows, error: staffErr }, { data: saleRows, error: saleErr }, { data: pettyRows, error: pettyErr }] = await Promise.all([
         sb.from("staff").select("name,active").order("name"),
         sb.from("sales").select("reference_person").gte("trx_date", STAFFCLEANUP_YEAR_FROM).lte("trx_date", STAFFCLEANUP_YEAR_TO).is("deleted_at", null),
+        sb.from("petty_cash_vouchers").select("staff_name").gte("trx_date", STAFFCLEANUP_YEAR_FROM).lte("trx_date", STAFFCLEANUP_YEAR_TO),
       ]);
       if (staffErr) return toast(staffErr.message, true);
       if (saleErr) return toast(saleErr.message, true);
+      if (pettyErr) return toast(pettyErr.message, true);
       const employees = (staffRows || []).map((s) => ({ name: s.name, active: s.active }));
       const employeeNames = new Set(employees.map((e) => e.name));
       const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
 
-      const counts = {};
-      (saleRows || []).forEach((r) => {
-        const v = (r.reference_person || "").trim();
+      const counts = {}; // { [recordedName]: { sales: n, petty: n } }
+      const bump = (v, key) => {
+        v = (v || "").trim();
         if (!v || isNonEmployeeStaffPlaceholder(v)) return;
         if (employeeNames.has(v)) return; // already an exact match -- nothing to clean up
-        counts[v] = (counts[v] || 0) + 1;
-      });
+        counts[v] = counts[v] || { sales: 0, petty: 0 };
+        counts[v][key] += 1;
+      };
+      (saleRows || []).forEach((r) => bump(r.reference_person, "sales"));
+      (pettyRows || []).forEach((r) => bump(r.staff_name, "petty"));
 
       staffCleanupRows = Object.keys(counts).sort().map((recorded) => {
         const suggestion = employees.find((e) => norm(e.name) === norm(recorded));
-        return { recorded, count: counts[recorded], suggested: suggestion ? suggestion.name : "" };
+        return { recorded, salesCount: counts[recorded].sales, pettyCount: counts[recorded].petty, suggested: suggestion ? suggestion.name : "" };
       });
 
       const tb = $("staffcleanup-table").querySelector("tbody");
@@ -2890,17 +3002,18 @@
       tb.innerHTML = staffCleanupRows.length
         ? staffCleanupRows.map((row, i) => `<tr>
             <td>${escapeHtml(row.recorded)}</td>
-            <td class="num">${row.count}</td>
+            <td class="num">${row.salesCount || ""}</td>
+            <td class="num">${row.pettyCount || ""}</td>
             <td><select data-cleanup-target="${i}">
               <option value="">Skip / leave as is</option>
               ${employees.map((e) => `<option value="${escapeHtml(e.name)}" ${e.name === row.suggested ? "selected" : ""}>${escapeHtml(e.name)}${e.active ? "" : " (inactive)"}</option>`).join("")}
             </select></td>
           </tr>`).join("")
-        : `<tr class="empty-row"><td colspan="3">Every employee name on a 2026 sale already matches an employee exactly — nothing to clean up</td></tr>`;
-      if (!staffCleanupRows.length) toast("No mismatches found in 2026 sales");
+        : `<tr class="empty-row"><td colspan="4">Every employee name on a 2026 Sale or Petty Cash Voucher already matches an employee exactly — nothing to clean up</td></tr>`;
+      if (!staffCleanupRows.length) toast("No mismatches found in 2026 records");
     } finally {
       $("staffcleanup-scan").disabled = false;
-      $("staffcleanup-scan").textContent = "Scan 2026 sales";
+      $("staffcleanup-scan").textContent = "Scan 2026 records";
     }
   }
   async function applyStaffCleanup() {
@@ -3071,11 +3184,13 @@
       reportsWired = true;
       $("reports-f-apply").addEventListener("click", loadReports);
       $("reports-f-year").addEventListener("change", loadReports);
+      $("reports-f-quarter").addEventListener("change", loadReports);
       $("reports-f-search").addEventListener("keydown", (e) => {
         if (e.key === "Enter") { e.preventDefault(); loadReports(); }
       });
       $("reports-f-clear").addEventListener("click", () => {
         $("reports-f-year").value = "";
+        $("reports-f-quarter").value = "";
         $("reports-f-search").value = "";
         loadReports();
       });
@@ -3103,8 +3218,10 @@
       .map((m) => byMonth[m]);
 
     const summaryYear = $("reports-f-year").value.trim();
+    const summaryQuarter = $("reports-f-quarter").value.trim();
     const summarySearch = $("reports-f-search").value.trim().toLowerCase();
     if (summaryYear) rows = rows.filter((r) => r.month.slice(0, 4) === summaryYear);
+    if (summaryQuarter) rows = rows.filter((r) => Math.ceil(Number(r.month.slice(5, 7)) / 3) === Number(summaryQuarter));
     if (summarySearch) rows = rows.filter((r) => fmtMonth(r.month.slice(0, 7)).toLowerCase().includes(summarySearch) || r.month.includes(summarySearch));
     lastSummaryRows = rows;
     lastClosuresForReports = closures || [];
@@ -3122,7 +3239,24 @@
             <td class="num">₱ ${fmtMoney(net)}</td>
             <td><button type="button" class="badge ${fs.cls}" style="border:none;cursor:pointer;" data-goto-filing="1" title="Manage in Audit & Integrity → Filing periods">${fs.label}</button></td>
           </tr>`;
-        }).join("")
+        }).join("") + (rows.length > 1
+          ? (() => {
+              const sum = (key) => rows.reduce((a, r) => a + Number(r[key] || 0), 0);
+              const totalNet = sum("net_sales") - sum("total_expenses");
+              return `<tr style="font-weight:650;">
+                <td>TOTAL (${rows.length} month${rows.length === 1 ? "" : "s"})</td>
+                <td class="num">₱ ${fmtMoney(sum("gross_sales"))}</td>
+                <td class="num">₱ ${fmtMoney(sum("net_sales"))}</td>
+                <td class="num">₱ ${fmtMoney(sum("vat_on_sales"))}</td>
+                <td class="num">₱ ${fmtMoney(sum("withholding_tax_on_sales"))}</td>
+                <td class="num">₱ ${fmtMoney(sum("vat_expenses"))}</td>
+                <td class="num">₱ ${fmtMoney(sum("non_vat_expenses"))}</td>
+                <td class="num">₱ ${fmtMoney(sum("total_expenses"))}</td>
+                <td class="num">₱ ${fmtMoney(totalNet)}</td>
+                <td></td>
+              </tr>`;
+            })()
+          : "")
       : `<tr class="empty-row"><td colspan="10">Log some issued invoices and expenses to see the summary</td></tr>`;
     tb.querySelectorAll("[data-goto-filing]").forEach((btn) => btn.addEventListener("click", () => showView("audit")));
 
