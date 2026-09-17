@@ -107,10 +107,14 @@
     const map = { "FULLY PAID": "good", PARTIAL: "warn", UNPAID: "bad", "N/A": "neutral" };
     return `<span class="badge ${map[status] || "neutral"}">${escapeHtml(status)}</span>`;
   }
-  function computeStatus(total, received) {
+  function computeStatus(total, received, taxWithheld) {
+    // Mirrors v_sales_status in the database: a sale is fully paid once
+    // the leftover balance is covered by withheld tax too, not just when
+    // it's zero -- a customer who withheld EWT legitimately pays less
+    // than the total, and that's not an unpaid balance.
     const bal = Number(total || 0) - Number(received || 0);
     if (Number(total || 0) <= 0) return "N/A";
-    if (bal <= 0) return "FULLY PAID";
+    if (bal <= Number(taxWithheld || 0)) return "FULLY PAID";
     if (Number(received || 0) > 0) return "PARTIAL";
     return "UNPAID";
   }
