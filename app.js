@@ -161,10 +161,16 @@
     "0.10": "WI010", // 10% — professional/talent fees (individual)
   };
   function atcForRate(pct) {
+    return atcForRateEntity(pct, currentSalesEntity);
+  }
+  // Same lookup as atcForRate(), but for a caller that isn't necessarily
+  // working within the currently-selected Daily Sales nav entity (e.g. the
+  // Sales Search edit modal, which can edit a sale under either entity).
+  function atcForRateEntity(pct, entity) {
     const entry = ATC_BY_RATE[pct];
     if (!entry) return null;
     if (typeof entry === "string") return entry;
-    return currentSalesEntity === "SOLE PROPRIETORSHIP" ? entry.WI : entry.WC;
+    return entity === "SOLE PROPRIETORSHIP" ? entry.WI : entry.WC;
   }
 
   // VAT threshold for monitoring Corp (Non-VAT) cumulative sales. BIR's
@@ -885,6 +891,143 @@
       (anyMismatch ? '<p class="hint">A mismatch usually means a sale from this date wasn\'t logged yet, or was logged under a different payment mode — worth double-checking before closing out the day.</p>' : "");
     $("cashcount-result").style.display = "block";
     toast("Cash count saved");
+  }
+
+  /* =====================================================================
+     SALES: FIND & MERGE SPLIT INVOICE PAYMENTS -- the same Xero invoice
+     sometimes ended up posted as more than one `sales` row instead of one
+     row with Amount received updated as each installment came in (most
+     often from the historical spreadsheet imports, where every payment
+     had its own line in the source sheet). Each such row individually
+     shows PARTIAL even when the payments add up to the full total, and
+     since the commission trigger only fires once a sale is fully paid on
+     ITS OWN row, a split sale never gets a commission at all. Merging
+     keeps the earliest row and folds the others' Amount received into it,
+     so status and commission both resolve correctly off one row instead
+     of double-counting across several.
+     ===================================================================== */
+  function initSalesDedupe() {
+    $("sales-dedupe-scan").addEventListener("click", scanForSplitSales);
+    $("sales-dedupe-confirm").addEventListener("click", confirmMergeSplitSales);
+    $("sales-dedupe-cancel").addEventListener("click", () => {
+      salesDedupeGroups = [];
+      $("sales-dedupe-results").style.display = "none";
+      $("sales-dedupe-summary").textContent = "";
+    });
+  }
+
+  let salesDedupeGroups = []; // [{ key, tradename, invoice_no, total_amount, rows: [...] }]
+  async function scanForSplitSales() {
+    if (!requireDb()) return;
+    $("sales-dedupe-summary").textContent = "Scanning...";
+    const { data, error } = await sb
+      .from("sales")
+      .select("id,trx_date,tradename,invoice_no,total_amount,amount_received,tax_withheld,reference_person,mode_of_payment,business_entity,remarks")
+      .is("deleted_at", null)
+      .not("invoice_no", "is", null)
+      .order("trx_date", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(10000);
+    if (error) { $("sales-dedupe-summary").textContent = ""; return toast(error.message, true); }
+
+    const groups = {};
+    (data || []).forEach((r) => {
+      const inv = String(r.invoice_no || "").trim().toUpperCase();
+      const trade = String(r.tradename || "").trim().toUpperCase();
+      if (!inv || !trade) return; // need both to match on -- never treat these as duplicates
+      const key = inv + "||" + trade + "||" + Number(r.total_amount || 0).toFixed(2);
+      groups[key] = groups[key] || [];
+      groups[key].push(r);
+    });
+
+    salesDedupeGroups = Object.entries(groups)
+      .filter(([, rows]) => rows.length > 1)
+      .map(([key, rows]) => {
+        // The earliest row is kept as-is except for Amount received (and a
+        // remarks note); Tax withheld is deliberately NOT summed across
+        // rows and NOT touched by the merge -- the withholding_2307 sync
+        // only runs from the Daily Sales save form, not from this tool, so
+        // changing Tax withheld here could leave a 2307 record out of
+        // sync. If withholding shows up on more than one row in a group,
+        // or the rows disagree on Employee, that's flagged below and left
+        // unchecked by default for a manual look instead of guessed at.
+        const keep = rows[0];
+        const totalAmount = Number(keep.total_amount || 0);
+        const combinedReceived = rows.reduce((sum, r) => sum + Number(r.amount_received || 0), 0);
+        const keepTaxWithheld = Number(keep.tax_withheld || 0);
+        const combinedBalance = totalAmount - combinedReceived;
+        const status = totalAmount <= 0 ? "N/A" : combinedBalance <= keepTaxWithheld ? "FULLY PAID" : combinedReceived > 0 ? "PARTIAL" : "UNPAID";
+        const otherWithholding = rows.slice(1).some((r) => Number(r.tax_withheld || 0) > 0);
+        const employeeMismatch = new Set(rows.map((r) => (r.reference_person || "").trim().toUpperCase())).size > 1;
+        const needsReview = otherWithholding || employeeMismatch;
+        return { key, tradename: keep.tradename, invoiceNo: keep.invoice_no, totalAmount, combinedReceived, combinedBalance, status, rows, needsReview, otherWithholding, employeeMismatch };
+      });
+
+    renderSalesDedupeResults();
+  }
+
+  function renderSalesDedupeResults() {
+    const panel = $("sales-dedupe-results");
+    if (!salesDedupeGroups.length) {
+      $("sales-dedupe-summary").textContent = "No split payments found (matched by same Xero invoice no. + tradename + total amount).";
+      panel.style.display = "none";
+      return;
+    }
+    const reviewCount = salesDedupeGroups.filter((g) => g.needsReview).length;
+    $("sales-dedupe-summary").textContent = `Found ${salesDedupeGroups.length} matching group(s)${reviewCount ? `, ${reviewCount} flagged for a manual look` : ""}.`;
+    const tb = $("sales-dedupe-table").querySelector("tbody");
+    tb.innerHTML = salesDedupeGroups
+      .map((g, i) => `<tr style="${g.needsReview ? "background:var(--warn-soft);" : ""}">
+          <td><input type="checkbox" data-dedupe-merge="${i}" ${g.needsReview ? "" : "checked"} /></td>
+          <td>${escapeHtml(g.invoiceNo || "")}</td>
+          <td>${escapeHtml(g.tradename || "")}</td>
+          <td class="num">₱ ${fmtMoney(g.totalAmount)}</td>
+          <td class="num">${g.rows.length}</td>
+          <td class="num">₱ ${fmtMoney(g.combinedReceived)}</td>
+          <td class="num">₱ ${fmtMoney(g.combinedBalance)}</td>
+          <td>${statusBadge(g.status)}${g.needsReview ? ` <span class="badge warn" title="${g.otherWithholding ? "Tax withheld is set on more than one row -- check before merging" : ""}${g.otherWithholding && g.employeeMismatch ? "; " : ""}${g.employeeMismatch ? "Employee differs between rows -- check which one should get the commission" : ""}">check first</span>` : ""}</td>
+          <td>${g.rows.map((r) => fmtDate(r.trx_date)).join(", ")}</td>
+        </tr>`)
+      .join("");
+    panel.style.display = "block";
+  }
+
+  async function confirmMergeSplitSales() {
+    if (!requireDb()) return;
+    const checks = $("sales-dedupe-table").querySelectorAll("[data-dedupe-merge]");
+    const groupsToMerge = [];
+    checks.forEach((cb, i) => { if (cb.checked) groupsToMerge.push(salesDedupeGroups[i]); });
+    if (!groupsToMerge.length) return toast("Nothing checked for merging", true);
+    if (!confirm(`Merge ${groupsToMerge.length} group(s)? The earliest row in each group is kept (Amount received updated to the combined total) and the other row(s) move to Trash (Audit & Integrity), not erased.`)) return;
+    $("sales-dedupe-confirm").disabled = true;
+    $("sales-dedupe-msg").textContent = "Merging...";
+    const { data: { user } } = await sb.auth.getUser();
+    let mergedGroups = 0, mergedRows = 0, failed = 0;
+    for (const g of groupsToMerge) {
+      const [keep, ...rest] = g.rows; // already sorted oldest-first from the scan query
+      const extraNotes = rest
+        .map((r) => `Merged installment: ₱${fmtMoney(r.amount_received)} on ${fmtDate(r.trx_date)}${r.mode_of_payment ? ` via ${r.mode_of_payment}` : ""}`)
+        .join(" | ");
+      const { error: updErr } = await sb.from("sales").update({
+        amount_received: g.combinedReceived,
+        remarks: [keep.remarks, extraNotes].filter(Boolean).join(" | ") || null,
+      }).eq("id", keep.id);
+      if (updErr) { toast(`Failed to merge invoice ${g.invoiceNo}: ${updErr.message}`, true); failed++; continue; }
+      const { error: delErr } = await sb.from("sales").update({
+        deleted_at: new Date().toISOString(), deleted_by: user?.email || null,
+        delete_reason: `merged into sale #${keep.id} (split invoice ${g.invoiceNo} consolidation)`,
+      }).in("id", rest.map((r) => r.id));
+      if (delErr) { toast(`Merged amounts for invoice ${g.invoiceNo}, but moving the extra row(s) to Trash failed: ${delErr.message}`, true); failed++; continue; }
+      mergedGroups++;
+      mergedRows += rest.length;
+    }
+    toast(`Merged ${mergedGroups} group(s), moved ${mergedRows} row(s) to Trash${failed ? ` — ${failed} failed, see above` : ""}`, failed > 0);
+    salesDedupeGroups = [];
+    $("sales-dedupe-results").style.display = "none";
+    $("sales-dedupe-summary").textContent = "";
+    $("sales-dedupe-msg").textContent = "";
+    $("sales-dedupe-confirm").disabled = false;
+    loadSales();
   }
 
   /* =====================================================================
@@ -1934,8 +2077,178 @@
           <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.amount_received)}</td>
           <td class="num">₱ ${fmtMoney(r.balance)}</td><td>${statusBadge(r.status)}</td>
           <td>${escapeHtml(r.invoice_no || "")}</td><td>${escapeHtml(r.bir_receipt_no || "")}</td>
+          <td class="row-actions"><button type="button" class="btn small" data-ss-edit="${r.id}">Edit</button></td>
         </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="10">No sales match this search</td></tr>`;
+      : `<tr class="empty-row"><td colspan="11">No sales match this search</td></tr>`;
+    tb.querySelectorAll("[data-ss-edit]").forEach((btn) =>
+      btn.addEventListener("click", () => openSalesSearchEdit(rows.find((r) => String(r.id) === btn.dataset.ssEdit)))
+    );
+  }
+
+  /* =====================================================================
+     SALES SEARCH: EDIT SALE MODAL -- lets an admin fix a wrong entry (typo,
+     wrong amount, wrong invoice no., etc.) straight from Sales Search
+     instead of having to go find it on Daily Sales -- Sole Prop or Corp.
+     Mirrors the Daily Sales form's own save logic (same computed VAT/ATC
+     helpers, same 2307 and Sales Report sync) but reads from its own set
+     of "ssedit-" fields so it doesn't disturb whatever's mid-entry on the
+     Daily Sales form, and works for either entity from the one modal.
+     ===================================================================== */
+  function initSalesSearchEditModal() {
+    $("ssedit-entity").addEventListener("change", () => {
+      $("ssedit-entity-warning").style.display = $("ssedit-entity").value !== ssEditOriginalEntity ? "" : "none";
+      updateSSEditVatPreview();
+      updateSSEditTaxWithheldFromPct();
+    });
+    $("ssedit-total").addEventListener("input", () => { updateSSEditTaxWithheldFromPct(); updateSSEditVatPreview(); });
+    $("ssedit-taxwithheld-pct").addEventListener("change", updateSSEditTaxWithheldFromPct);
+    $("ssedit-taxwithheld").addEventListener("input", updateSSEdit2307FieldVisibility);
+    $("ssedit-2307status").addEventListener("change", updateSSEdit2307FieldVisibility);
+    $("ssedit-zerorated").addEventListener("change", () => {
+      if ($("ssedit-zerorated").checked) $("ssedit-vatexempt").checked = false;
+      updateSSEditVatPreview();
+      updateSSEditTaxWithheldFromPct();
+    });
+    $("ssedit-vatexempt").addEventListener("change", () => {
+      if ($("ssedit-vatexempt").checked) $("ssedit-zerorated").checked = false;
+      updateSSEditVatPreview();
+      updateSSEditTaxWithheldFromPct();
+    });
+    $("ssedit-close").addEventListener("click", closeSalesSearchEdit);
+    $("ssedit-cancel").addEventListener("click", closeSalesSearchEdit);
+    $("ssedit-overlay").addEventListener("click", (e) => {
+      if (e.target === $("ssedit-overlay")) closeSalesSearchEdit();
+    });
+    $("ssedit-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!requireDb()) return;
+      const id = $("ssedit-id").value;
+      if (!id) return;
+      const entity = $("ssedit-entity").value;
+      const grossAmount = Number($("ssedit-total").value || 0);
+      const zeroRated = $("ssedit-zerorated").checked;
+      const vatExempt = $("ssedit-vatexempt").checked;
+      const { vat } = computeNetVat(grossAmount, entity, zeroRated || vatExempt);
+      const pct = $("ssedit-taxwithheld-pct").value;
+      const clientIssuedSel = $("ssedit-2307status").value; // "", "yes", "no"
+      const certFile = $("ssedit-2307upload").files[0] || null;
+      const payload = {
+        trx_date: $("ssedit-date").value,
+        tradename: $("ssedit-tradename").value.trim(),
+        quote_no: $("ssedit-quote").value.trim() || null,
+        reference_person: $("ssedit-staff").value.trim() || null,
+        total_amount: grossAmount,
+        amount_received: Number($("ssedit-received").value || 0),
+        mode_of_payment: $("ssedit-mode").value.trim() || null,
+        invoice_no: $("ssedit-invoice").value.trim() || null,
+        business_entity: entity || null,
+        tin: $("ssedit-tin").value.trim() || null,
+        atc: $("ssedit-atc").value.trim() || null,
+        tax_withheld: $("ssedit-taxwithheld").value ? Number($("ssedit-taxwithheld").value) : null,
+        tax_withheld_rate: pct ? Number(pct) : null,
+        bir_receipt_no: $("ssedit-bir").value.trim() || null,
+        is_walkin: $("ssedit-walkin").checked,
+        zero_rated: zeroRated,
+        vat_exempt: vatExempt,
+        vat_amount: entity === "SOLE PROPRIETORSHIP" ? vat : 0,
+        discount_amount: $("ssedit-discount").value ? Number($("ssedit-discount").value) : 0,
+        discount_details: $("ssedit-discount-details").value.trim() || null,
+        description: $("ssedit-description").value.trim() || null,
+        remarks: $("ssedit-remarks").value.trim() || null,
+      };
+      const { error } = await sb.from("sales").update(payload).eq("id", id);
+      if (error) return toast(error.message, true);
+      let msg = "Sale updated";
+      let certPath = null;
+      if (certFile) certPath = await uploadClientCertificate(certFile, id);
+      await syncSaleWithholding(id, payload, {
+        clientIssued: clientIssuedSel === "yes" ? true : clientIssuedSel === "no" ? false : null,
+        certificateFilePath: certPath,
+      });
+      if (Number(payload.tax_withheld || 0) > 0) msg += " — 2307 (Received) synced";
+      await syncSalesReport(id, payload);
+      if ((payload.bir_receipt_no || "").trim()) msg += " — Sales Report synced";
+      toast(msg);
+      closeSalesSearchEdit();
+      loadSalesSearch();
+    });
+  }
+  let ssEditOriginalEntity = "";
+  async function openSalesSearchEdit(r) {
+    if (!r) return;
+    ssEditOriginalEntity = r.business_entity || "";
+    $("ssedit-id").value = r.id;
+    $("ssedit-date").value = r.trx_date;
+    $("ssedit-tradename").value = r.tradename || "";
+    $("ssedit-quote").value = r.quote_no || "";
+    $("ssedit-staff").value = r.reference_person || "";
+    $("ssedit-entity").value = r.business_entity || "SOLE PROPRIETORSHIP";
+    $("ssedit-entity-warning").style.display = "none";
+    $("ssedit-total").value = r.total_amount;
+    $("ssedit-received").value = r.amount_received;
+    $("ssedit-mode").value = r.mode_of_payment || "";
+    $("ssedit-invoice").value = r.invoice_no || "";
+    $("ssedit-tin").value = r.tin || "";
+    $("ssedit-atc").value = r.atc || "";
+    $("ssedit-taxwithheld").value = r.tax_withheld ?? "";
+    $("ssedit-taxwithheld-pct").value = r.tax_withheld_rate != null ? String(r.tax_withheld_rate) : "";
+    $("ssedit-bir").value = r.bir_receipt_no || "";
+    $("ssedit-walkin").checked = !!r.is_walkin;
+    $("ssedit-zerorated").checked = !!r.zero_rated;
+    $("ssedit-vatexempt").checked = !!r.vat_exempt;
+    $("ssedit-discount").value = r.discount_amount || "";
+    $("ssedit-discount-details").value = r.discount_details || "";
+    $("ssedit-description").value = r.description || "";
+    $("ssedit-remarks").value = r.remarks || "";
+    $("ssedit-2307status").value = "";
+    $("ssedit-2307upload").value = "";
+    $("ssedit-msg").textContent = "";
+    updateSSEditVatPreview();
+    updateSSEdit2307FieldVisibility();
+    $("ssedit-overlay").style.display = "flex";
+    // Prefill "has the client issued the 2307" from the linked record, if
+    // any, so re-saving an edit doesn't silently wipe out a status someone
+    // already answered (same reasoning as the Daily Sales form's editSale()).
+    if (Number(r.tax_withheld || 0) > 0 && requireDb()) {
+      const { data: wh } = await sb.from("withholding_2307").select("client_issued").eq("sale_id", r.id).maybeSingle();
+      if (wh && wh.client_issued === true) $("ssedit-2307status").value = "yes";
+      else if (wh && wh.client_issued === false) $("ssedit-2307status").value = "no";
+      updateSSEdit2307FieldVisibility();
+    }
+  }
+  function closeSalesSearchEdit() {
+    $("ssedit-overlay").style.display = "none";
+    $("ssedit-form").reset();
+  }
+  function updateSSEditVatPreview() {
+    const entity = $("ssedit-entity").value;
+    if (entity !== "SOLE PROPRIETORSHIP") { $("ssedit-vat-preview").value = "N/A (Non-VAT)"; return; }
+    const gross = Number($("ssedit-total").value || 0);
+    const exempt = $("ssedit-zerorated").checked || $("ssedit-vatexempt").checked;
+    const { vat } = computeNetVat(gross, entity, exempt);
+    $("ssedit-vat-preview").value = "₱ " + fmtMoney(vat) + (exempt ? ($("ssedit-zerorated").checked ? " (zero-rated)" : " (exempt)") : "");
+  }
+  function updateSSEditTaxWithheldFromPct() {
+    const pct = $("ssedit-taxwithheld-pct").value;
+    const hint = $("ssedit-taxwithheld-basis-hint");
+    if (!pct) { if (hint) hint.textContent = ""; return; }
+    const entity = $("ssedit-entity").value;
+    const gross = Number($("ssedit-total").value || 0);
+    const exempt = $("ssedit-zerorated").checked || $("ssedit-vatexempt").checked;
+    const { net } = computeNetVat(gross, entity, exempt);
+    $("ssedit-taxwithheld").value = net > 0 ? (net * Number(pct)).toFixed(2) : "";
+    $("ssedit-atc").value = atcForRateEntity(pct, entity) || $("ssedit-atc").value;
+    if (hint) {
+      hint.textContent = entity === "SOLE PROPRIETORSHIP" && !exempt
+        ? `computed on net-of-VAT ₱${fmtMoney(net)}`
+        : "computed on gross (no VAT to net out)";
+    }
+    updateSSEdit2307FieldVisibility();
+  }
+  function updateSSEdit2307FieldVisibility() {
+    const show = Number($("ssedit-taxwithheld").value || 0) > 0;
+    $("ssedit-2307status-field").style.display = show ? "" : "none";
+    $("ssedit-2307upload-field").style.display = show && $("ssedit-2307status").value === "yes" ? "" : "none";
   }
 
   /* =====================================================================
@@ -3521,6 +3834,7 @@
      BOOT
      ===================================================================== */
   initSalesForm();
+  initSalesDedupe();
   initExpensesForm();
   initPettyCashForm();
   initExpensesImport();
@@ -3528,6 +3842,7 @@
   initBillsForm();
   initInvoicesForm();
   initSalesSearchForm();
+  initSalesSearchEditModal();
   initCashDisbursementForm();
   initExpensesReportForm();
   initWithholdingForm();

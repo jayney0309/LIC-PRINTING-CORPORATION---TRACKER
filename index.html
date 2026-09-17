@@ -177,6 +177,34 @@
         </form>
       </div>
 
+      <!-- ======================= SALES: FIND & MERGE SPLIT INVOICE PAYMENTS ======================= -->
+      <div class="panel" id="sales-dedupe-panel">
+        <div class="panel-head">
+          <h2>Find &amp; merge split invoice payments</h2>
+          <span class="hint">Matches rows that share the same Xero invoice no. + tradename + total amount</span>
+        </div>
+        <p class="section-note">When the same invoice was posted as more than one row — e.g. a partial payment logged as its own sale instead of updating the original — each row can show "Partial" even though the payments add up to full. Merging keeps the earliest row, adds the other row(s)' Amount received into it, and moves the rest to Trash (Audit &amp; Integrity), not erased. This also lets the commission trigger see the sale as fully paid, so it can show up For Approval.</p>
+        <div class="form-actions">
+          <button type="button" class="btn" id="sales-dedupe-scan">Scan for split payments</button>
+          <span class="hint" id="sales-dedupe-summary"></span>
+        </div>
+        <div id="sales-dedupe-results" style="display:none;">
+          <p class="section-note">Every group is checked by default, except groups flagged "check first" (Tax withheld set on more than one row, or the rows disagree on Employee) — those are left unchecked for you to look at before merging. Also uncheck any group that's actually two separate transactions that happen to share an invoice number (different jobs, coincidentally same amount).</p>
+          <div class="table-wrap"><table class="data" id="sales-dedupe-table">
+            <thead><tr>
+              <th></th><th>Xero Invoice</th><th>Tradename</th><th class="num">Total</th><th># rows</th>
+              <th class="num">Combined received</th><th class="num">Combined balance</th><th>Resulting status</th><th>Dates involved</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table></div>
+          <div class="form-actions">
+            <button type="button" class="btn danger" id="sales-dedupe-confirm">Merge checked groups</button>
+            <button type="button" class="btn ghost" id="sales-dedupe-cancel">Cancel</button>
+            <span class="hint" id="sales-dedupe-msg"></span>
+          </div>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-head"><h2>Sales log</h2></div>
         <div class="filters">
@@ -818,9 +846,9 @@
             <th>Employee</th><th>Entity</th><th class="num">Total</th>
             <th class="num">Received</th><th class="num">Balance</th><th>Status</th>
             <th><button type="button" class="btn ghost small" data-sort-ss="invoice_no" style="padding:2px 4px;">Xero Invoice<span class="sort-arrow"></span></button></th>
-            <th>BIR receipt</th>
+            <th>BIR receipt</th><th>Actions</th>
           </tr></thead>
-          <tbody><tr class="empty-row"><td colspan="10">Enter a name, an invoice number (Xero or BIR), or a date range to search</td></tr></tbody>
+          <tbody><tr class="empty-row"><td colspan="11">Enter a name, an invoice number (Xero or BIR), or a date range to search</td></tr></tbody>
         </table></div>
       </div>
     </section>
@@ -1156,6 +1184,73 @@
     </section>
 
   </main>
+</div>
+
+<!-- ======================= SALES SEARCH: EDIT SALE MODAL ======================= -->
+<div class="modal-overlay" id="ssedit-overlay" style="display:none;">
+  <div class="modal-panel">
+    <div class="panel-head">
+      <h2>Edit sale</h2>
+      <button type="button" class="btn ghost small" id="ssedit-close" aria-label="Close">&times;</button>
+    </div>
+    <p class="section-note">Fixing an entry here saves straight back to the same sale record — no need to go to Daily Sales. Amount and status changes are picked up immediately wherever this sale is used (Commission, Reports, 2307 Register).</p>
+    <p class="section-note" id="ssedit-entity-warning" style="display:none;">⚠ You're changing which entity this sale belongs to — its revenue will move from one book to the other.</p>
+    <form id="ssedit-form" class="form-grid">
+      <input type="hidden" id="ssedit-id" />
+      <div class="field"><label>Date</label><input type="date" id="ssedit-date" required /></div>
+      <div class="field wide"><label>Tradename / Customer</label><input list="customer-list" id="ssedit-tradename" required /></div>
+      <div class="field"><label>Quote No.</label><input id="ssedit-quote" placeholder="QU-..." /></div>
+      <div class="field"><label>Employee</label><input list="staff-list" id="ssedit-staff" placeholder="Who handled it" /></div>
+      <div class="field"><label>Entity</label>
+        <select id="ssedit-entity">
+          <option value="SOLE PROPRIETORSHIP">Sole Proprietorship</option>
+          <option value="CORPORATION">Corporation</option>
+        </select>
+      </div>
+      <div class="field"><label>Total Amount (Gross Sales)</label><input type="number" step="0.01" min="0" id="ssedit-total" required /></div>
+      <div class="field"><label>Amount received</label><input type="number" step="0.01" min="0" id="ssedit-received" /></div>
+      <div class="field"><label>Mode of payment</label><input list="payment-modes" id="ssedit-mode" /></div>
+      <div class="field"><label>Xero Invoice No.</label><input id="ssedit-invoice" placeholder="INV-..." /></div>
+      <div class="field"><label>Customer TIN</label><input id="ssedit-tin" placeholder="000-000-000-000" /></div>
+      <div class="field"><label>Tax withheld %</label>
+        <select id="ssedit-taxwithheld-pct">
+          <option value="">None</option>
+          <option value="0.01">1%</option>
+          <option value="0.02">2%</option>
+          <option value="0.05">5%</option>
+          <option value="0.10">10%</option>
+        </select>
+      </div>
+      <div class="field"><label>Tax withheld (₱)</label><input type="number" step="0.01" min="0" id="ssedit-taxwithheld" placeholder="0.00" /><span class="hint" id="ssedit-taxwithheld-basis-hint"></span></div>
+      <div class="field"><label>ATC</label><input id="ssedit-atc" placeholder="auto-suggested from %" /></div>
+      <div class="field" id="ssedit-2307status-field" style="display:none;">
+        <label>Has the client issued the 2307?</label>
+        <select id="ssedit-2307status">
+          <option value="">Not sure yet / ask later</option>
+          <option value="yes">Yes — client already issued it</option>
+          <option value="no">No — not issued yet</option>
+        </select>
+      </div>
+      <div class="field" id="ssedit-2307upload-field" style="display:none;">
+        <label>Upload client's 2307 (optional)</label>
+        <input type="file" id="ssedit-2307upload" accept=".pdf,.jpg,.jpeg,.png" />
+      </div>
+      <div class="field"><label>BIR receipt no.</label><input id="ssedit-bir" /></div>
+      <div class="field checkbox-field"><input type="checkbox" id="ssedit-walkin" /><label>Walk-in customer</label></div>
+      <div class="field"><div class="checkbox-field"><input type="checkbox" id="ssedit-zerorated" /><label>Zero-rated sale</label></div></div>
+      <div class="field"><div class="checkbox-field"><input type="checkbox" id="ssedit-vatexempt" /><label>VAT-exempt sale</label></div></div>
+      <div class="field"><label>VAT (auto)</label><input id="ssedit-vat-preview" disabled placeholder="₱0.00" /></div>
+      <div class="field"><label>Discount</label><input type="number" step="0.01" min="0" id="ssedit-discount" placeholder="0.00" /></div>
+      <div class="field wide"><label>Discount details</label><input id="ssedit-discount-details" placeholder="e.g. Senior citizen / PWD, ID no..." /></div>
+      <div class="field wide"><label>Description / job</label><input id="ssedit-description" /></div>
+      <div class="field wide"><label>Remarks</label><input id="ssedit-remarks" placeholder="FP / DP / balance notes..." /></div>
+      <div class="form-actions wide">
+        <button type="submit" class="btn primary">Save changes</button>
+        <button type="button" class="btn ghost" id="ssedit-cancel">Cancel</button>
+        <span class="hint" id="ssedit-msg"></span>
+      </div>
+    </form>
+  </div>
 </div>
 
 <datalist id="staff-list"></datalist>
