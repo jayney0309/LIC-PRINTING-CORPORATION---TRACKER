@@ -781,6 +781,7 @@
       <div class="panel">
         <div class="panel-head"><h2>Search sales</h2></div>
         <div class="filters">
+          <div class="field wide"><label>Name</label><input id="salessearch-f-name" placeholder="Tradename or employee..." /></div>
           <div class="field wide"><label>Xero or BIR invoice no.</label><input id="salessearch-f-invoice" placeholder="e.g. INV-1029 or 00123" /></div>
           <div class="field"><label>From</label><input type="date" id="salessearch-f-from" /></div>
           <div class="field"><label>To</label><input type="date" id="salessearch-f-to" /></div>
@@ -799,7 +800,7 @@
             <th>Date</th><th>Tradename</th><th>Employee</th><th>Entity</th><th class="num">Total</th>
             <th class="num">Received</th><th class="num">Balance</th><th>Status</th><th>Xero Invoice</th><th>BIR receipt</th>
           </tr></thead>
-          <tbody><tr class="empty-row"><td colspan="10">Enter an invoice number (Xero or BIR) or a date range to search</td></tr></tbody>
+          <tbody><tr class="empty-row"><td colspan="10">Enter a name, an invoice number (Xero or BIR), or a date range to search</td></tr></tbody>
         </table></div>
       </div>
     </section>
@@ -810,7 +811,8 @@
       <div class="panel">
         <div class="panel-head"><h2>Search expenses</h2></div>
         <div class="filters">
-          <div class="field wide"><label>Search</label><input id="cashdisb-f-search" placeholder="Business / payee name..." /></div>
+          <div class="field wide"><label>Name</label><input id="cashdisb-f-search" placeholder="Business / payee name..." /></div>
+          <div class="field wide"><label>Invoice/OR no.</label><input id="cashdisb-f-invoice" placeholder="e.g. INV-1029 or OR-2044" /></div>
           <div class="field"><label>From</label><input type="date" id="cashdisb-f-from" /></div>
           <div class="field"><label>To</label><input type="date" id="cashdisb-f-to" /></div>
           <div class="field"><label>Entity</label>
@@ -837,7 +839,7 @@
             <th>Date</th><th>Business</th><th>Category</th><th>Tax type</th><th>Entity</th>
             <th class="num">Amount</th><th>Mode</th><th>Invoice/OR no.</th>
           </tr></thead>
-          <tbody><tr class="empty-row"><td colspan="8">Enter a search term or a date range to search</td></tr></tbody>
+          <tbody><tr class="empty-row"><td colspan="8">Enter a name, an invoice/OR no., or a date range to search</td></tr></tbody>
         </table></div>
       </div>
     </section>

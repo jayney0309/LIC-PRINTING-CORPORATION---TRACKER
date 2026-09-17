@@ -1854,11 +1854,12 @@
      ===================================================================== */
   function initSalesSearchForm() {
     $("salessearch-f-apply").addEventListener("click", loadSalesSearch);
-    $("salessearch-f-invoice").addEventListener("keydown", (e) => {
+    ["salessearch-f-name", "salessearch-f-invoice"].forEach((id) => $(id).addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); loadSalesSearch(); }
-    });
+    }));
     ["salessearch-f-from", "salessearch-f-to", "salessearch-f-entity"].forEach((id) => $(id).addEventListener("change", loadSalesSearch));
     $("salessearch-f-clear").addEventListener("click", () => {
+      $("salessearch-f-name").value = "";
       $("salessearch-f-invoice").value = "";
       $("salessearch-f-from").value = "";
       $("salessearch-f-to").value = "";
@@ -1868,16 +1869,18 @@
   }
   async function loadSalesSearch() {
     if (!requireDb()) return;
+    const name = $("salessearch-f-name").value.trim();
     const term = $("salessearch-f-invoice").value.trim();
     const from = $("salessearch-f-from").value;
     const to = $("salessearch-f-to").value;
     const entity = $("salessearch-f-entity").value;
     const tb = $("salessearch-table").querySelector("tbody");
-    if (!term && !from && !to && !entity) {
-      tb.innerHTML = `<tr class="empty-row"><td colspan="10">Enter an invoice number (Xero or BIR) or a date range to search</td></tr>`;
+    if (!name && !term && !from && !to && !entity) {
+      tb.innerHTML = `<tr class="empty-row"><td colspan="10">Enter a name, an invoice number (Xero or BIR), or a date range to search</td></tr>`;
       return;
     }
     let q = sb.from("v_sales_status").select("*").order("trx_date", { ascending: false });
+    if (name) q = q.or(`tradename.ilike.%${name}%,reference_person.ilike.%${name}%`);
     if (term) q = q.or(`invoice_no.ilike.%${term}%,bir_receipt_no.ilike.%${term}%`);
     if (from) q = q.gte("trx_date", from);
     if (to) q = q.lte("trx_date", to);
@@ -1905,12 +1908,13 @@
      ===================================================================== */
   function initCashDisbursementForm() {
     $("cashdisb-f-apply").addEventListener("click", loadCashDisbursement);
-    $("cashdisb-f-search").addEventListener("keydown", (e) => {
+    ["cashdisb-f-search", "cashdisb-f-invoice"].forEach((id) => $(id).addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); loadCashDisbursement(); }
-    });
+    }));
     ["cashdisb-f-from", "cashdisb-f-to", "cashdisb-f-entity", "cashdisb-f-taxtype"].forEach((id) => $(id).addEventListener("change", loadCashDisbursement));
     $("cashdisb-f-clear").addEventListener("click", () => {
       $("cashdisb-f-search").value = "";
+      $("cashdisb-f-invoice").value = "";
       $("cashdisb-f-from").value = "";
       $("cashdisb-f-to").value = "";
       $("cashdisb-f-entity").value = "";
@@ -1921,17 +1925,19 @@
   async function loadCashDisbursement() {
     if (!requireDb()) return;
     const search = $("cashdisb-f-search").value.trim();
+    const invoice = $("cashdisb-f-invoice").value.trim();
     const from = $("cashdisb-f-from").value;
     const to = $("cashdisb-f-to").value;
     const entity = $("cashdisb-f-entity").value;
     const taxType = $("cashdisb-f-taxtype").value;
     const tb = $("cashdisb-table").querySelector("tbody");
-    if (!search && !from && !to && !entity && !taxType) {
-      tb.innerHTML = `<tr class="empty-row"><td colspan="8">Enter a search term or a date range to search</td></tr>`;
+    if (!search && !invoice && !from && !to && !entity && !taxType) {
+      tb.innerHTML = `<tr class="empty-row"><td colspan="8">Enter a name, an invoice/OR no., or a date range to search</td></tr>`;
       return;
     }
     let q = sb.from("expenses").select("*").is("deleted_at", null).order("trx_date", { ascending: false });
     if (search) q = q.ilike("business_name", `%${search}%`);
+    if (invoice) q = q.ilike("invoice_no", `%${invoice}%`);
     if (from) q = q.gte("trx_date", from);
     if (to) q = q.lte("trx_date", to);
     if (entity) q = q.eq("business_entity", entity);
