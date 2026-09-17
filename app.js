@@ -2616,7 +2616,7 @@
   function initCommissionForm() {
     populateEmployeeSelects();
     $("commission-f-apply").addEventListener("click", loadCommissions);
-    ["commission-f-status", "commission-f-entity", "commission-f-paid", "commission-f-employee"].forEach((id) => $(id).addEventListener("change", loadCommissions));
+    ["commission-f-status", "commission-f-entity", "commission-f-paid", "commission-f-employee", "commission-f-month"].forEach((id) => $(id).addEventListener("change", loadCommissions));
     $("commission-f-search").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); loadCommissions(); }
     });
@@ -2625,6 +2625,7 @@
       $("commission-f-paid").value = "";
       $("commission-f-entity").value = "";
       $("commission-f-employee").value = "";
+      $("commission-f-month").value = "";
       $("commission-f-search").value = "";
       loadCommissions();
     });
@@ -2665,6 +2666,7 @@
     const paid = $("commission-f-paid").value;
     const entity = $("commission-f-entity").value;
     const employee = $("commission-f-employee").value;
+    const month = $("commission-f-month").value;
     const search = $("commission-f-search").value.trim();
     // Embed the linked sale so the Xero invoice no., tradename and amount
     // received show up here without duplicating those columns onto
@@ -2676,6 +2678,11 @@
     if (paid === "paid") q = q.not("paid_at", "is", null);
     if (entity) q = q.eq("business_entity", entity);
     if (employee) q = q.eq("staff_name", employee);
+    if (month) {
+      const [y, m] = month.split("-").map(Number);
+      const nextMonth = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+      q = q.gte("trx_date", `${month}-01`).lt("trx_date", nextMonth);
+    }
     // Search matches employee name, tradename, or Xero invoice no. -- the
     // latter two live on the embedded `sales` row, not a column Postgrest
     // can filter on directly alongside staff_name in one query, so ALL of
