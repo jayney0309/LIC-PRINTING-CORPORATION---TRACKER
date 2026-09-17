@@ -75,6 +75,28 @@
     }
     return true;
   }
+  // Supabase/PostgREST enforces its own server-side "Max Rows" cap on every
+  // request (this project's is 1000) no matter how large a .limit(N) the
+  // client asks for -- a plain .limit(2000) or .limit(5000) silently comes
+  // back with only the first 1000 rows. Fine for an ordinary browse-list
+  // view (showing "the most recent 1000" is a reasonable UI choice), but
+  // wrong for anything that has to see the WHOLE table -- a scan, a
+  // reconciliation, a BIR compliance report -- where silently dropping
+  // rows past #1000 means silently wrong output. This pages through with
+  // .range() until a short page comes back, so the caller always gets
+  // everything. buildQuery(from, to) must build and return a *fresh*
+  // Supabase query each call (with .range(from, to) applied) -- don't
+  // reuse a single already-built query object across calls.
+  async function fetchAllPages(buildQuery, pageSize = 1000) {
+    let all = [];
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await buildQuery(from, from + pageSize - 1);
+      if (error) return { data: null, error };
+      all = all.concat(data || []);
+      if (!data || data.length < pageSize) break;
+    }
+    return { data: all, error: null };
+  }
   function toCSV(rows, columns) {
     const head = columns.map((c) => c.label).join(",");
     const body = rows
@@ -694,13 +716,20 @@
     }
   }
   async function fetchSalesRows() {
-    let q = sb.from("v_sales_status").select("*").eq("business_entity", currentSalesEntity).order("trx_date", { ascending: false });
+    // Paged (see fetchAllPages) -- with several years of history now
+    // imported, one entity's unfiltered sales log (and, worse, its CSV
+    // export) can pass 1000 rows on its own; a flat .limit(1000) would
+    // silently drop the rest.
     const from = $("sales-f-from").value, to = $("sales-f-to").value, status = $("sales-f-status").value, search = $("sales-f-search").value.trim();
-    if (from) q = q.gte("trx_date", from);
-    if (to) q = q.lte("trx_date", to);
-    if (status) q = q.eq("status", status);
-    if (search) q = q.ilike("tradename", `%${search}%`);
-    const { data, error } = await q.limit(1000);
+    const buildQ = (from_, to_) => {
+      let q = sb.from("v_sales_status").select("*").eq("business_entity", currentSalesEntity).order("trx_date", { ascending: false });
+      if (from) q = q.gte("trx_date", from);
+      if (to) q = q.lte("trx_date", to);
+      if (status) q = q.eq("status", status);
+      if (search) q = q.ilike("tradename", `%${search}%`);
+      return q.range(from_, to_);
+    };
+    const { data, error } = await fetchAllPages(buildQ);
     if (error) { toast(error.message, true); return []; }
     return data || [];
   }
@@ -920,14 +949,21 @@
   async function scanForSplitSales() {
     if (!requireDb()) return;
     $("sales-dedupe-summary").textContent = "Scanning...";
-    const { data, error } = await sb
-      .from("sales")
-      .select("id,trx_date,tradename,invoice_no,total_amount,amount_received,tax_withheld,reference_person,mode_of_payment,business_entity,remarks")
-      .is("deleted_at", null)
-      .not("invoice_no", "is", null)
-      .order("trx_date", { ascending: true })
-      .order("id", { ascending: true })
-      .limit(10000);
+    // This has to see every sale to find every split pair -- a single
+    // .limit(10000) silently came back with only the oldest 1000 rows
+    // (Supabase's server-side cap, regardless of what .limit() asks for),
+    // which is why a real split invoice from late 2025 wasn't found even
+    // though an earlier one from 2024 was. fetchAllPages() pages through
+    // with .range() so nothing past row #1000 goes missing.
+    const { data, error } = await fetchAllPages((from, to) =>
+      sb.from("sales")
+        .select("id,trx_date,tradename,invoice_no,total_amount,amount_received,tax_withheld,reference_person,mode_of_payment,business_entity,remarks")
+        .is("deleted_at", null)
+        .not("invoice_no", "is", null)
+        .order("trx_date", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
     if (error) { $("sales-dedupe-summary").textContent = ""; return toast(error.message, true); }
 
     const groups = {};
@@ -1269,16 +1305,21 @@
     }
   }
   async function fetchExpensesRows() {
-    let q = sb.from("expenses").select("*").eq("business_entity", currentExpensesEntity).is("deleted_at", null).order("trx_date", { ascending: false });
+    // Paged (see fetchAllPages) -- same reasoning as fetchSalesRows(): one
+    // entity's unfiltered expenses log/CSV export can now pass 1000 rows.
     const from = $("expenses-f-from").value, to = $("expenses-f-to").value, cat = $("expenses-f-category").value.trim(), search = $("expenses-f-search").value.trim();
     const withholding = $("expenses-f-withholding").value;
-    if (from) q = q.gte("trx_date", from);
-    if (to) q = q.lte("trx_date", to);
-    if (cat) q = q.ilike("category", `%${cat}%`);
-    if (search) q = q.ilike("business_name", `%${search}%`);
-    if (withholding === "with") q = q.gt("tax_withheld", 0);
-    else if (withholding === "without") q = q.or("tax_withheld.is.null,tax_withheld.eq.0");
-    const { data, error } = await q.limit(1000);
+    const buildQ = (from_, to_) => {
+      let q = sb.from("expenses").select("*").eq("business_entity", currentExpensesEntity).is("deleted_at", null).order("trx_date", { ascending: false });
+      if (from) q = q.gte("trx_date", from);
+      if (to) q = q.lte("trx_date", to);
+      if (cat) q = q.ilike("category", `%${cat}%`);
+      if (search) q = q.ilike("business_name", `%${search}%`);
+      if (withholding === "with") q = q.gt("tax_withheld", 0);
+      else if (withholding === "without") q = q.or("tax_withheld.is.null,tax_withheld.eq.0");
+      return q.range(from_, to_);
+    };
+    const { data, error } = await fetchAllPages(buildQ);
     if (error) { toast(error.message, true); return []; }
     return data || [];
   }
@@ -1596,13 +1637,17 @@
   async function scanForDuplicateExpenses() {
     if (!requireDb()) return;
     $("expenses-dedupe-summary").textContent = "Scanning...";
-    const { data, error } = await sb
-      .from("expenses")
-      .select("id,trx_date,invoice_no,business_name,amount")
-      .is("deleted_at", null)
-      .order("trx_date", { ascending: true })
-      .order("id", { ascending: true })
-      .limit(5000);
+    // Paged (see fetchAllPages) so a history that's grown past 1000
+    // expense rows still gets scanned in full instead of silently only
+    // the oldest 1000.
+    const { data, error } = await fetchAllPages((from, to) =>
+      sb.from("expenses")
+        .select("id,trx_date,invoice_no,business_name,amount")
+        .is("deleted_at", null)
+        .order("trx_date", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
     if (error) { $("expenses-dedupe-summary").textContent = ""; return toast(error.message, true); }
 
     const groups = {};
@@ -1720,12 +1765,17 @@
     const to = $("pettycash-f-to").value;
     const staff = $("pettycash-f-staff").value.trim();
     const entity = $("pettycash-f-entity").value;
-    let q = sb.from("petty_cash_vouchers").select("*").order("trx_date", { ascending: false });
-    if (from) q = q.gte("trx_date", from);
-    if (to) q = q.lte("trx_date", to);
-    if (staff) q = q.ilike("staff_name", `%${staff}%`);
-    if (entity) q = q.eq("business_entity", entity);
-    const { data, error } = await q.limit(2000);
+    // Paged (see fetchAllPages) so an unfiltered/all-history view doesn't
+    // silently cap at the oldest 1000 vouchers.
+    const buildQ = (from_, to_) => {
+      let q = sb.from("petty_cash_vouchers").select("*").order("trx_date", { ascending: false });
+      if (from) q = q.gte("trx_date", from);
+      if (to) q = q.lte("trx_date", to);
+      if (staff) q = q.ilike("staff_name", `%${staff}%`);
+      if (entity) q = q.eq("business_entity", entity);
+      return q.range(from_, to_);
+    };
+    const { data, error } = await fetchAllPages(buildQ);
     if (error) return toast(error.message, true);
     const rows = data || [];
     const tb = $("pettycash-table").querySelector("tbody");
@@ -1778,12 +1828,18 @@
         loadReceivables();
       });
     }
-    let q = sb.from("v_sales_status").select("*").neq("balance", 0).order("trx_date", { ascending: true });
+    // Paged (see fetchAllPages) -- receivables aging has to account for
+    // every open balance across the whole history, not just the oldest
+    // 500-1000.
     const search = $("receivables-f-search").value.trim();
     const entity = $("receivables-f-entity").value;
-    if (search) q = q.ilike("tradename", `%${search}%`);
-    if (entity) q = q.eq("business_entity", entity);
-    const { data, error } = await q.limit(500);
+    const buildQ = (from_, to_) => {
+      let q = sb.from("v_sales_status").select("*").neq("balance", 0).order("trx_date", { ascending: true });
+      if (search) q = q.ilike("tradename", `%${search}%`);
+      if (entity) q = q.eq("business_entity", entity);
+      return q.range(from_, to_);
+    };
+    const { data, error } = await fetchAllPages(buildQ);
     if (error) return toast(error.message, true);
     const rows = data || [];
     const total = rows.reduce((a, r) => a + Number(r.balance || 0), 0);
@@ -1963,12 +2019,18 @@
     XLSX.writeFile(wb, "sales_report_SLS_relief.xlsx");
   }
   async function fetchInvoicesRows() {
-    let q = sb.from("issued_invoices").select("*").order("month_declared", { ascending: false });
+    // Paged (see fetchAllPages) -- this feeds the BIR SLS/RELIEF export,
+    // which has to include every issued invoice for the period, not just
+    // the first 1000.
     const month = $("invoices-f-month").value, search = $("invoices-f-search").value.trim(), entity = $("invoices-f-entity").value;
-    if (month) q = q.eq("month_declared", month + "-01");
-    if (search) q = q.ilike("customer_name", `%${search}%`);
-    if (entity) q = q.eq("business_entity", entity);
-    const { data, error } = await q.limit(1000);
+    const buildQ = (from_, to_) => {
+      let q = sb.from("issued_invoices").select("*").order("month_declared", { ascending: false });
+      if (month) q = q.eq("month_declared", month + "-01");
+      if (search) q = q.ilike("customer_name", `%${search}%`);
+      if (entity) q = q.eq("business_entity", entity);
+      return q.range(from_, to_);
+    };
+    const { data, error } = await fetchAllPages(buildQ);
     if (error) { toast(error.message, true); return []; }
     return data || [];
   }
@@ -2038,17 +2100,25 @@
     const entity = $("salessearch-f-entity").value;
     const tb = $("salessearch-table").querySelector("tbody");
     if (!name && !term && !from && !to && !entity) {
-      tb.innerHTML = `<tr class="empty-row"><td colspan="10">Enter a name, an invoice number (Xero or BIR), or a date range to search</td></tr>`;
+      tb.innerHTML = `<tr class="empty-row"><td colspan="11">Enter a name, an invoice number (Xero or BIR), or a date range to search</td></tr>`;
       lastSalesSearchRows = [];
       return;
     }
-    let q = sb.from("v_sales_status").select("*").order("trx_date", { ascending: false });
-    if (name) q = q.or(`tradename.ilike.%${name}%,reference_person.ilike.%${name}%`);
-    if (term) q = q.or(`invoice_no.ilike.%${term}%,bir_receipt_no.ilike.%${term}%`);
-    if (from) q = q.gte("trx_date", from);
-    if (to) q = q.lte("trx_date", to);
-    if (entity) q = q.eq("business_entity", entity);
-    const { data, error } = await q.limit(500);
+    // Paged (see fetchAllPages) -- a broad search (a common tradename, or
+    // a wide date range) can easily match more than 500-1000 rows now
+    // that several years of history are loaded, and this page exists
+    // specifically so a record can always be found and fixed here, so it
+    // must not silently cap out early.
+    const buildQ = (from_, to_) => {
+      let q = sb.from("v_sales_status").select("*").order("trx_date", { ascending: false });
+      if (name) q = q.or(`tradename.ilike.%${name}%,reference_person.ilike.%${name}%`);
+      if (term) q = q.or(`invoice_no.ilike.%${term}%,bir_receipt_no.ilike.%${term}%`);
+      if (from) q = q.gte("trx_date", from);
+      if (to) q = q.lte("trx_date", to);
+      if (entity) q = q.eq("business_entity", entity);
+      return q.range(from_, to_);
+    };
+    const { data, error } = await fetchAllPages(buildQ);
     if (error) return toast(error.message, true);
     lastSalesSearchRows = data || [];
     renderSalesSearchRows();
@@ -2303,14 +2373,20 @@
       lastCashDisbRows = [];
       return;
     }
-    let q = sb.from("expenses").select("*").is("deleted_at", null).order("trx_date", { ascending: false });
-    if (search) q = q.ilike("business_name", `%${search}%`);
-    if (invoice) q = q.ilike("invoice_no", `%${invoice}%`);
-    if (from) q = q.gte("trx_date", from);
-    if (to) q = q.lte("trx_date", to);
-    if (entity) q = q.eq("business_entity", entity);
-    if (taxType) q = q.eq("tax_type", taxType);
-    const { data, error } = await q.limit(2000);
+    // Paged (see fetchAllPages) so a broad, unfiltered-by-date search
+    // across the growing multi-year history doesn't silently stop at the
+    // oldest 1000 matches.
+    const buildQ = (from_, to_) => {
+      let q = sb.from("expenses").select("*").is("deleted_at", null).order("trx_date", { ascending: false });
+      if (search) q = q.ilike("business_name", `%${search}%`);
+      if (invoice) q = q.ilike("invoice_no", `%${invoice}%`);
+      if (from) q = q.gte("trx_date", from);
+      if (to) q = q.lte("trx_date", to);
+      if (entity) q = q.eq("business_entity", entity);
+      if (taxType) q = q.eq("tax_type", taxType);
+      return q.range(from_, to_);
+    };
+    const { data, error } = await fetchAllPages(buildQ);
     if (error) return toast(error.message, true);
     lastCashDisbRows = data || [];
     renderCashDisbRows();
@@ -2416,10 +2492,17 @@
     const search = $("expreport-search").value.trim();
     const category = $("expreport-category").value;
 
-    let q = sb.from("expenses").select("*").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null).order("trx_date", { ascending: false });
-    if (entity) q = q.eq("business_entity", entity);
-    if (search) q = q.ilike("business_name", `%${search}%`);
-    const { data, error } = await q.limit(2000);
+    // Paged (see fetchAllPages) -- this is a BIR-facing compliance report,
+    // so a wide date range that happens to cross 1000 expense rows must
+    // not silently under-report; a single .limit(2000) would still have
+    // been capped at 1000 by Supabase's server-side row limit.
+    const buildQ = (from_, to_) => {
+      let q = sb.from("expenses").select("*").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null).order("trx_date", { ascending: false });
+      if (entity) q = q.eq("business_entity", entity);
+      if (search) q = q.ilike("business_name", `%${search}%`);
+      return q.range(from_, to_);
+    };
+    const { data, error } = await fetchAllPages(buildQ);
     if (error) return toast(error.message, true);
     // Tax & compliance is BIR-facing -- only VAT / Non-VAT expenses (i.e.
     // ones with an actual BIR receipt) belong here; EXEMPT, "NOT BIR
@@ -2529,14 +2612,20 @@
     $("withholding-cancel-edit").style.display = "none";
   }
   async function fetchWithholdingRows() {
-    let q = sb.from("withholding_2307").select("*").order("year", { ascending: false }).order("quarter", { ascending: false });
+    // Paged (see fetchAllPages) -- the 2307 Register is a BIR compliance
+    // record, so an unfiltered or wide-year view can't silently stop at
+    // the first 1000 rows.
     const year = $("withholding-f-year").value, qtr = $("withholding-f-quarter").value, direction = $("withholding-f-direction").value;
     const search = $("withholding-f-search").value.trim().replace(/[,()]/g, "");
-    if (year) q = q.eq("year", Number(year));
-    if (qtr) q = q.eq("quarter", qtr);
-    if (direction) q = q.eq("direction", direction);
-    if (search) q = q.or(`payee_name.ilike.%${search}%,tin.ilike.%${search}%,atc.ilike.%${search}%`);
-    const { data, error } = await q.limit(1000);
+    const buildQ = (from_, to_) => {
+      let q = sb.from("withholding_2307").select("*").order("year", { ascending: false }).order("quarter", { ascending: false });
+      if (year) q = q.eq("year", Number(year));
+      if (qtr) q = q.eq("quarter", qtr);
+      if (direction) q = q.eq("direction", direction);
+      if (search) q = q.or(`payee_name.ilike.%${search}%,tin.ilike.%${search}%,atc.ilike.%${search}%`);
+      return q.range(from_, to_);
+    };
+    const { data, error } = await fetchAllPages(buildQ);
     if (error) { toast(error.message, true); return []; }
     return data || [];
   }
@@ -2987,36 +3076,42 @@
     const search = $("commission-f-search").value.trim();
     // Embed the linked sale so the Xero invoice no., tradename and amount
     // received show up here without duplicating those columns onto
-    // staff_commissions itself.
-    let q = sb.from("staff_commissions").select("*, sales(tradename, invoice_no, amount_received)")
-      .order("status", { ascending: true }).order("trx_date", { ascending: false }).limit(500);
-    if (status) q = q.eq("status", status);
-    if (paid === "unpaid") q = q.is("paid_at", null);
-    if (paid === "paid") q = q.not("paid_at", "is", null);
-    if (entity) q = q.eq("business_entity", entity);
-    if (employee) q = q.eq("staff_name", employee);
-    if (month) {
-      const [y, m] = month.split("-").map(Number);
-      const nextMonth = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
-      q = q.gte("trx_date", `${month}-01`).lt("trx_date", nextMonth);
-    }
+    // staff_commissions itself. Paged (see fetchAllPages) -- an unfiltered
+    // "For approval" view especially must not silently hide a commission
+    // just because the table has grown past 500-1000 rows across years of
+    // imported sales.
+    const buildQ = (from_, to_) => {
+      let q = sb.from("staff_commissions").select("*, sales(tradename, invoice_no, amount_received)")
+        .order("status", { ascending: true }).order("trx_date", { ascending: false });
+      if (status) q = q.eq("status", status);
+      if (paid === "unpaid") q = q.is("paid_at", null);
+      if (paid === "paid") q = q.not("paid_at", "is", null);
+      if (entity) q = q.eq("business_entity", entity);
+      if (employee) q = q.eq("staff_name", employee);
+      if (month) {
+        const [y, m] = month.split("-").map(Number);
+        const nextMonth = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+        q = q.gte("trx_date", `${month}-01`).lt("trx_date", nextMonth);
+      }
+      // "Staff" on old, bulk-imported sales sometimes holds a placeholder
+      // instead of an actual employee ("WALK IN", anything starting with
+      // "LIC" -- the company itself, not a person -- or "DENNIS", the
+      // owner) -- if that sale happened to be fully paid, the
+      // auto-commission trigger created a row for it same as for a real
+      // employee. Filtered out here so none of these ever show up as if
+      // someone's owed a commission. "LIC%" is a starts-with match, not
+      // "contains" -- doesn't catch a real employee whose name happens to
+      // contain those letters (e.g. ALICIA).
+      q = q.not("staff_name", "ilike", "WALK IN").not("staff_name", "ilike", "LIC%").not("staff_name", "ilike", "DENNIS");
+      return q.range(from_, to_);
+    };
     // Search matches employee name, tradename, or Xero invoice no. -- the
     // latter two live on the embedded `sales` row, not a column Postgrest
     // can filter on directly alongside staff_name in one query, so ALL of
     // this match happens client-side below instead of narrowing here (a
     // DB-level ilike on staff_name alone would incorrectly hide a row that
     // only matches on tradename/invoice no.).
-    // "Staff" on old, bulk-imported sales sometimes holds a placeholder
-    // instead of an actual employee ("WALK IN", anything starting with
-    // "LIC" -- the company itself, not a person -- or "DENNIS", the
-    // owner) -- if that sale happened to be fully paid, the auto-commission
-    // trigger created a row for it same as for a real employee. Filtered
-    // out here so none of these ever show up as if someone's owed a
-    // commission. "LIC%" is a starts-with match, not "contains" -- doesn't
-    // catch a real employee whose name happens to contain those letters
-    // (e.g. ALICIA).
-    q = q.not("staff_name", "ilike", "WALK IN").not("staff_name", "ilike", "LIC%").not("staff_name", "ilike", "DENNIS");
-    const { data, error } = await q;
+    const { data, error } = await fetchAllPages(buildQ);
     if (error) return toast(error.message, true);
     let rows = data || [];
     // Tradename search has to happen client-side since it's on the
@@ -3182,20 +3277,29 @@
       summary.textContent = "";
       return;
     }
-    let q = sb.from("v_sales_status").select("*")
-      .ilike("reference_person", employee)
-      .eq("is_walkin", false)
-      .order("trx_date", { ascending: false })
-      .limit(2000);
-    if (from) q = q.gte("trx_date", from);
-    if (to) q = q.lte("trx_date", to);
-    const { data: sales, error } = await q;
+    // Paged (see fetchAllPages) -- a long-tenured employee's full sales
+    // history can pass 1000 rows, and this reconciliation exists
+    // specifically to catch mismatches, so it can't silently stop early.
+    const buildQ = (from_, to_) => {
+      let q = sb.from("v_sales_status").select("*")
+        .ilike("reference_person", employee)
+        .eq("is_walkin", false)
+        .order("trx_date", { ascending: false });
+      if (from) q = q.gte("trx_date", from);
+      if (to) q = q.lte("trx_date", to);
+      return q.range(from_, to_);
+    };
+    const { data: sales, error } = await fetchAllPages(buildQ);
     if (error) return toast(error.message, true);
     const rows = sales || [];
     const saleIds = rows.map((s) => s.id);
     const commBySale = {};
     if (saleIds.length) {
-      const { data: comms, error: commErr } = await sb.from("staff_commissions").select("*").in("sale_id", saleIds);
+      // Also paged, same reasoning: one commission per sale, so this can
+      // pass 1000 rows exactly when `sales` did above.
+      const { data: comms, error: commErr } = await fetchAllPages((from_, to_) =>
+        sb.from("staff_commissions").select("*").in("sale_id", saleIds).range(from_, to_)
+      );
       if (commErr) return toast(commErr.message, true);
       (comms || []).forEach((c) => (commBySale[c.sale_id] = c));
     }
@@ -3375,13 +3479,25 @@
     $("staffcleanup-scan").disabled = true;
     $("staffcleanup-scan").textContent = "Scanning...";
     try {
-      let salesQ = sb.from("sales").select("reference_person").is("deleted_at", null);
-      let pettyQ = sb.from("petty_cash_vouchers").select("staff_name");
-      if (staffCleanupFrom) { salesQ = salesQ.gte("trx_date", staffCleanupFrom).lte("trx_date", staffCleanupTo); pettyQ = pettyQ.gte("trx_date", staffCleanupFrom).lte("trx_date", staffCleanupTo); }
+      // A year like 2025 alone has 3000+ sales rows -- well past Supabase's
+      // 1000-row-per-request cap -- so this has to page through with
+      // .range() (fetchAllPages) rather than fire one plain, unbounded
+      // query, or a scan of a busy year (or "All years") would silently
+      // miss most of it and under-report the mismatches to clean up.
+      const buildSalesQ = (from, to) => {
+        let q = sb.from("sales").select("reference_person").is("deleted_at", null);
+        if (staffCleanupFrom) q = q.gte("trx_date", staffCleanupFrom).lte("trx_date", staffCleanupTo);
+        return q.range(from, to);
+      };
+      const buildPettyQ = (from, to) => {
+        let q = sb.from("petty_cash_vouchers").select("staff_name");
+        if (staffCleanupFrom) q = q.gte("trx_date", staffCleanupFrom).lte("trx_date", staffCleanupTo);
+        return q.range(from, to);
+      };
       const [{ data: staffRows, error: staffErr }, { data: saleRows, error: saleErr }, { data: pettyRows, error: pettyErr }] = await Promise.all([
         sb.from("staff").select("name,active").order("name"),
-        salesQ,
-        pettyQ,
+        fetchAllPages(buildSalesQ),
+        fetchAllPages(buildPettyQ),
       ]);
       if (staffErr) return toast(staffErr.message, true);
       if (saleErr) return toast(saleErr.message, true);
