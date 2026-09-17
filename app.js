@@ -3043,8 +3043,12 @@
   // Vouchers -- same relinking the Employees-tab rename does, just
   // scoped to this year and starting from whatever's actually recorded
   // instead of an employee record.
-  const STAFFCLEANUP_YEAR_FROM = "2026-01-01";
-  const STAFFCLEANUP_YEAR_TO = "2026-12-31";
+  // Set by scanStaffCleanup() each run, from whatever year was picked at
+  // scan time -- applyStaffCleanup() reuses these exact bounds so a rename
+  // only ever touches the records that were actually shown on screen, even
+  // if the Year dropdown gets changed in between.
+  let staffCleanupFrom = null;
+  let staffCleanupTo = null;
   let staffCleanupRows = []; // [{ recorded, count, employees: [names] }]
   function initStaffCleanup() {
     $("staffcleanup-scan").addEventListener("click", scanStaffCleanup);
@@ -3052,13 +3056,19 @@
   }
   async function scanStaffCleanup() {
     if (!requireDb()) return;
+    const year = $("staffcleanup-year").value;
+    staffCleanupFrom = year ? `${year}-01-01` : null;
+    staffCleanupTo = year ? `${year}-12-31` : null;
     $("staffcleanup-scan").disabled = true;
     $("staffcleanup-scan").textContent = "Scanning...";
     try {
+      let salesQ = sb.from("sales").select("reference_person").is("deleted_at", null);
+      let pettyQ = sb.from("petty_cash_vouchers").select("staff_name");
+      if (staffCleanupFrom) { salesQ = salesQ.gte("trx_date", staffCleanupFrom).lte("trx_date", staffCleanupTo); pettyQ = pettyQ.gte("trx_date", staffCleanupFrom).lte("trx_date", staffCleanupTo); }
       const [{ data: staffRows, error: staffErr }, { data: saleRows, error: saleErr }, { data: pettyRows, error: pettyErr }] = await Promise.all([
         sb.from("staff").select("name,active").order("name"),
-        sb.from("sales").select("reference_person").gte("trx_date", STAFFCLEANUP_YEAR_FROM).lte("trx_date", STAFFCLEANUP_YEAR_TO).is("deleted_at", null),
-        sb.from("petty_cash_vouchers").select("staff_name").gte("trx_date", STAFFCLEANUP_YEAR_FROM).lte("trx_date", STAFFCLEANUP_YEAR_TO),
+        salesQ,
+        pettyQ,
       ]);
       if (staffErr) return toast(staffErr.message, true);
       if (saleErr) return toast(saleErr.message, true);
@@ -3096,11 +3106,11 @@
               ${employees.map((e) => `<option value="${escapeHtml(e.name)}" ${e.name === row.suggested ? "selected" : ""}>${escapeHtml(e.name)}${e.active ? "" : " (inactive)"}</option>`).join("")}
             </select></td>
           </tr>`).join("")
-        : `<tr class="empty-row"><td colspan="4">Every employee name on a 2026 Sale or Petty Cash Voucher already matches an employee exactly — nothing to clean up</td></tr>`;
-      if (!staffCleanupRows.length) toast("No mismatches found in 2026 records");
+        : `<tr class="empty-row"><td colspan="4">Every employee name on a${year ? " " + year : "n all-years"} Sale or Petty Cash Voucher already matches an employee exactly — nothing to clean up</td></tr>`;
+      if (!staffCleanupRows.length) toast(`No mismatches found${year ? " in " + year : ""}`);
     } finally {
       $("staffcleanup-scan").disabled = false;
-      $("staffcleanup-scan").textContent = "Scan 2026 records";
+      $("staffcleanup-scan").textContent = "Scan records";
     }
   }
   async function applyStaffCleanup() {
@@ -3115,10 +3125,10 @@
     try {
       let totalSales = 0, totalComm = 0, totalPetty = 0;
       for (const job of jobs) {
-        const salesRes = await sb.from("sales").update({ reference_person: job.target })
-          .eq("reference_person", job.row.recorded)
-          .gte("trx_date", STAFFCLEANUP_YEAR_FROM).lte("trx_date", STAFFCLEANUP_YEAR_TO)
-          .select("id");
+        let salesUpdQ = sb.from("sales").update({ reference_person: job.target }).eq("reference_person", job.row.recorded);
+        let pettyUpdQ = sb.from("petty_cash_vouchers").update({ staff_name: job.target }).eq("staff_name", job.row.recorded);
+        if (staffCleanupFrom) { salesUpdQ = salesUpdQ.gte("trx_date", staffCleanupFrom).lte("trx_date", staffCleanupTo); pettyUpdQ = pettyUpdQ.gte("trx_date", staffCleanupFrom).lte("trx_date", staffCleanupTo); }
+        const salesRes = await salesUpdQ.select("id");
         if (salesRes.error) { toast(`Failed to rename "${job.row.recorded}": ${salesRes.error.message}`, true); continue; }
         const saleIds = (salesRes.data || []).map((r) => r.id);
         totalSales += saleIds.length;
@@ -3128,10 +3138,7 @@
           if (commRes.error) toast(`Renamed sales for "${job.row.recorded}", but relinking commissions failed: ${commRes.error.message}`, true);
           else totalComm += (commRes.data || []).length;
         }
-        const pettyRes = await sb.from("petty_cash_vouchers").update({ staff_name: job.target })
-          .eq("staff_name", job.row.recorded)
-          .gte("trx_date", STAFFCLEANUP_YEAR_FROM).lte("trx_date", STAFFCLEANUP_YEAR_TO)
-          .select("id");
+        const pettyRes = await pettyUpdQ.select("id");
         if (pettyRes.error) toast(`Renamed sales for "${job.row.recorded}", but relinking petty cash failed: ${pettyRes.error.message}`, true);
         else totalPetty += (pettyRes.data || []).length;
       }

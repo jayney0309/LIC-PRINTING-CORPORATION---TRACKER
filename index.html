@@ -727,11 +727,26 @@
 
       <div class="panel">
         <div class="panel-head">
-          <h2>Clean up 2026 employee names</h2>
-          <span class="hint">Finds employee names recorded on 2026 Sales or Petty Cash Vouchers that don't exactly match an employee name above — e.g. a typo or different casing — so you can retitle them to the official name in one go</span>
+          <h2>Clean up employee names</h2>
+          <span class="hint">Finds employee names recorded on Sales or Petty Cash Vouchers that don't exactly match an employee name above — e.g. a typo or different casing — so you can retitle them to the official name in one go</span>
         </div>
-        <p class="section-note">Scans <strong>2026 Sales and Petty Cash Vouchers only</strong>. A rename here updates the name everywhere it was found — Sales, that sale's Commission record, and Petty Cash Vouchers — same relinking the Employees rename above does, just scoped to this year and starting from whatever's actually recorded instead of an employee record.</p>
-        <div class="form-actions"><button type="button" class="btn small accent" id="staffcleanup-scan">Scan 2026 records</button></div>
+        <p class="section-note">Scans Sales and Petty Cash Vouchers for the year picked below (or all years). A rename here updates the name everywhere it was found — Sales, that sale's Commission record, and Petty Cash Vouchers — same relinking the Employees rename above does, just starting from whatever's actually recorded instead of an employee record.</p>
+        <div class="form-actions">
+          <div class="field"><label>Year</label>
+            <select id="staffcleanup-year">
+              <option value="">All years</option>
+              <option value="2026" selected>2026</option>
+              <option value="2025">2025</option>
+              <option value="2024">2024</option>
+              <option value="2023">2023</option>
+              <option value="2022">2022</option>
+              <option value="2021">2021</option>
+              <option value="2020">2020</option>
+              <option value="2019">2019</option>
+            </select>
+          </div>
+          <button type="button" class="btn small accent" id="staffcleanup-scan">Scan records</button>
+        </div>
         <div class="table-wrap" id="staffcleanup-wrap" style="display:none; margin-top:10px;">
           <table class="data" id="staffcleanup-table">
             <thead><tr>
