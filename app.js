@@ -1852,6 +1852,12 @@
      reads straight from `sales` (via v_sales_status), unlike the Sales
      Report tab which only ever holds rows that already have a BIR receipt.
      ===================================================================== */
+  let lastSalesSearchRows = [];
+  // { key: "trx_date" | "tradename" | "invoice_no", dir: "asc" | "desc" } --
+  // null keeps the server's default order (newest first). Set by clicking
+  // a sortable column header; re-renders from lastSalesSearchRows so it
+  // doesn't need to hit the database again.
+  let salesSearchSort = null;
   function initSalesSearchForm() {
     $("salessearch-f-apply").addEventListener("click", loadSalesSearch);
     ["salessearch-f-name", "salessearch-f-invoice"].forEach((id) => $(id).addEventListener("keydown", (e) => {
@@ -1866,6 +1872,15 @@
       $("salessearch-f-entity").value = "";
       loadSalesSearch();
     });
+    document.querySelectorAll("#salessearch-table [data-sort-ss]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const key = btn.dataset.sortSs;
+        salesSearchSort = salesSearchSort && salesSearchSort.key === key
+          ? { key, dir: salesSearchSort.dir === "asc" ? "desc" : "asc" }
+          : { key, dir: "asc" };
+        renderSalesSearchRows();
+      })
+    );
   }
   async function loadSalesSearch() {
     if (!requireDb()) return;
@@ -1877,6 +1892,7 @@
     const tb = $("salessearch-table").querySelector("tbody");
     if (!name && !term && !from && !to && !entity) {
       tb.innerHTML = `<tr class="empty-row"><td colspan="10">Enter a name, an invoice number (Xero or BIR), or a date range to search</td></tr>`;
+      lastSalesSearchRows = [];
       return;
     }
     let q = sb.from("v_sales_status").select("*").order("trx_date", { ascending: false });
@@ -1887,7 +1903,26 @@
     if (entity) q = q.eq("business_entity", entity);
     const { data, error } = await q.limit(500);
     if (error) return toast(error.message, true);
-    const rows = data || [];
+    lastSalesSearchRows = data || [];
+    renderSalesSearchRows();
+  }
+  function renderSalesSearchRows() {
+    let rows = lastSalesSearchRows.slice();
+    if (salesSearchSort) {
+      const { key, dir } = salesSearchSort;
+      const get = (r) => (key === "invoice_no" ? r.invoice_no : key === "tradename" ? r.tradename : r.trx_date) || "";
+      rows.sort((a, b) => {
+        const cmp = String(get(a)).localeCompare(String(get(b)), undefined, { numeric: true });
+        return dir === "asc" ? cmp : -cmp;
+      });
+    }
+    document.querySelectorAll("#salessearch-table [data-sort-ss]").forEach((th) => {
+      const key = th.dataset.sortSs;
+      const arrow = th.querySelector(".sort-arrow");
+      if (!arrow) return;
+      arrow.textContent = salesSearchSort && salesSearchSort.key === key ? (salesSearchSort.dir === "asc" ? " ▲" : " ▼") : "";
+    });
+    const tb = $("salessearch-table").querySelector("tbody");
     tb.innerHTML = rows.length
       ? rows.map((r) => `<tr>
           <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.tradename)}</td><td>${escapeHtml(r.reference_person || "")}</td>
@@ -1906,6 +1941,12 @@
      unrestricted view for internal reconciliation (the Admin group's
      counterpart to Sales Search, which is the same idea for sales).
      ===================================================================== */
+  let lastCashDisbRows = [];
+  // { key: "trx_date" | "business_name" | "invoice_no", dir: "asc" | "desc" }
+  // -- null keeps the server's default order (newest first). Set by
+  // clicking a sortable column header; re-renders from lastCashDisbRows so
+  // it doesn't need to hit the database again.
+  let cashDisbSort = null;
   function initCashDisbursementForm() {
     $("cashdisb-f-apply").addEventListener("click", loadCashDisbursement);
     ["cashdisb-f-search", "cashdisb-f-invoice"].forEach((id) => $(id).addEventListener("keydown", (e) => {
@@ -1921,6 +1962,15 @@
       $("cashdisb-f-taxtype").value = "";
       loadCashDisbursement();
     });
+    document.querySelectorAll("#cashdisb-table [data-sort-cd]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const key = btn.dataset.sortCd;
+        cashDisbSort = cashDisbSort && cashDisbSort.key === key
+          ? { key, dir: cashDisbSort.dir === "asc" ? "desc" : "asc" }
+          : { key, dir: "asc" };
+        renderCashDisbRows();
+      })
+    );
   }
   async function loadCashDisbursement() {
     if (!requireDb()) return;
@@ -1933,6 +1983,7 @@
     const tb = $("cashdisb-table").querySelector("tbody");
     if (!search && !invoice && !from && !to && !entity && !taxType) {
       tb.innerHTML = `<tr class="empty-row"><td colspan="8">Enter a name, an invoice/OR no., or a date range to search</td></tr>`;
+      lastCashDisbRows = [];
       return;
     }
     let q = sb.from("expenses").select("*").is("deleted_at", null).order("trx_date", { ascending: false });
@@ -1944,7 +1995,26 @@
     if (taxType) q = q.eq("tax_type", taxType);
     const { data, error } = await q.limit(2000);
     if (error) return toast(error.message, true);
-    const rows = data || [];
+    lastCashDisbRows = data || [];
+    renderCashDisbRows();
+  }
+  function renderCashDisbRows() {
+    let rows = lastCashDisbRows.slice();
+    if (cashDisbSort) {
+      const { key, dir } = cashDisbSort;
+      const get = (r) => (key === "invoice_no" ? r.invoice_no : key === "business_name" ? r.business_name : r.trx_date) || "";
+      rows.sort((a, b) => {
+        const cmp = String(get(a)).localeCompare(String(get(b)), undefined, { numeric: true });
+        return dir === "asc" ? cmp : -cmp;
+      });
+    }
+    document.querySelectorAll("#cashdisb-table [data-sort-cd]").forEach((th) => {
+      const key = th.dataset.sortCd;
+      const arrow = th.querySelector(".sort-arrow");
+      if (!arrow) return;
+      arrow.textContent = cashDisbSort && cashDisbSort.key === key ? (cashDisbSort.dir === "asc" ? " ▲" : " ▼") : "";
+    });
+    const tb = $("cashdisb-table").querySelector("tbody");
     tb.innerHTML = rows.length
       ? rows.map((r) => `<tr>
           <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.business_name)}</td><td>${escapeHtml(r.category || "")}</td>

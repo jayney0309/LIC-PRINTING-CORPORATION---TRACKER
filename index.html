@@ -797,8 +797,12 @@
         </div>
         <div class="table-wrap"><table class="data" id="salessearch-table">
           <thead><tr>
-            <th>Date</th><th>Tradename</th><th>Employee</th><th>Entity</th><th class="num">Total</th>
-            <th class="num">Received</th><th class="num">Balance</th><th>Status</th><th>Xero Invoice</th><th>BIR receipt</th>
+            <th><button type="button" class="btn ghost small" data-sort-ss="trx_date" style="padding:2px 4px;">Date<span class="sort-arrow"></span></button></th>
+            <th><button type="button" class="btn ghost small" data-sort-ss="tradename" style="padding:2px 4px;">Tradename<span class="sort-arrow"></span></button></th>
+            <th>Employee</th><th>Entity</th><th class="num">Total</th>
+            <th class="num">Received</th><th class="num">Balance</th><th>Status</th>
+            <th><button type="button" class="btn ghost small" data-sort-ss="invoice_no" style="padding:2px 4px;">Xero Invoice<span class="sort-arrow"></span></button></th>
+            <th>BIR receipt</th>
           </tr></thead>
           <tbody><tr class="empty-row"><td colspan="10">Enter a name, an invoice number (Xero or BIR), or a date range to search</td></tr></tbody>
         </table></div>
@@ -836,8 +840,11 @@
         </div>
         <div class="table-wrap"><table class="data" id="cashdisb-table">
           <thead><tr>
-            <th>Date</th><th>Business</th><th>Category</th><th>Tax type</th><th>Entity</th>
-            <th class="num">Amount</th><th>Mode</th><th>Invoice/OR no.</th>
+            <th><button type="button" class="btn ghost small" data-sort-cd="trx_date" style="padding:2px 4px;">Date<span class="sort-arrow"></span></button></th>
+            <th><button type="button" class="btn ghost small" data-sort-cd="business_name" style="padding:2px 4px;">Business<span class="sort-arrow"></span></button></th>
+            <th>Category</th><th>Tax type</th><th>Entity</th>
+            <th class="num">Amount</th><th>Mode</th>
+            <th><button type="button" class="btn ghost small" data-sort-cd="invoice_no" style="padding:2px 4px;">Invoice/OR no.<span class="sort-arrow"></span></button></th>
           </tr></thead>
           <tbody><tr class="empty-row"><td colspan="8">Enter a name, an invoice/OR no., or a date range to search</td></tr></tbody>
         </table></div>
