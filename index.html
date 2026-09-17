@@ -184,10 +184,11 @@
           <span class="hint">Matches rows that share the same Xero invoice no. + tradename</span>
         </div>
         <p class="section-note">When the same invoice was posted as more than one row — e.g. a partial payment logged as its own sale instead of updating the original — each row can show "Partial" even though the payments add up to full. Merging keeps the earliest row, adds the other row(s)' Amount received into it, and moves the rest to Trash (Audit &amp; Integrity), not erased. This also lets the commission trigger see the sale as fully paid, so it can show up For Approval.</p>
-        <div class="form-actions">
+        <div class="filters">
+          <div class="field"><label>Xero invoice no. (optional)</label><input id="sales-dedupe-invoice-filter" placeholder="Leave blank to scan every invoice" /></div>
           <button type="button" class="btn" id="sales-dedupe-scan">Scan for split payments</button>
-          <span class="hint" id="sales-dedupe-summary"></span>
         </div>
+        <p class="hint" id="sales-dedupe-summary"></p>
         <div id="sales-dedupe-results" style="display:none;">
           <p class="section-note">Every group is checked by default, except groups flagged "check first" (Tax withheld set on more than one row, the rows disagree on Employee, or the rows disagree on Total amount) — those are left unchecked for you to look at before merging. Also uncheck any group that's actually two separate transactions that happen to share an invoice number (different jobs, coincidentally same total), or a plain duplicate entry (the same payment logged twice) rather than a real split payment — merging sums Amount received across every row in the group, so that would overstate how much was actually paid.</p>
           <div class="table-wrap"><table class="data" id="sales-dedupe-table">
@@ -1273,6 +1274,6 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="config.js" onerror="console.warn('config.js not found — copy config.example.js to config.js')"></script>
-<script src="app.js?v=20260917b"></script>
+<script src="app.js?v=20260917c"></script>
 </body>
 </html>

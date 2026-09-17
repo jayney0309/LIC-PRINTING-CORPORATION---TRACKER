@@ -937,6 +937,9 @@
      ===================================================================== */
   function initSalesDedupe() {
     $("sales-dedupe-scan").addEventListener("click", scanForSplitSales);
+    $("sales-dedupe-invoice-filter").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); scanForSplitSales(); }
+    });
     $("sales-dedupe-confirm").addEventListener("click", confirmMergeSplitSales);
     $("sales-dedupe-cancel").addEventListener("click", () => {
       salesDedupeGroups = [];
@@ -947,26 +950,36 @@
 
   let salesDedupeGroups = []; // [{ key, tradename, invoice_no, total_amount, rows: [...] }]
   let salesDedupeScannedCount = 0; // how many sales rows the last scan actually pulled in -- surfaced in the summary text as a sanity check (a low count after a hard refresh points at a caching problem, not a matching-logic problem)
+  let salesDedupeLastFilter = ""; // the Xero invoice filter the last scan ran with, if any -- echoed back in the summary so it's clear whether the scan just ran was narrowed or full-table
   async function scanForSplitSales() {
     if (!requireDb()) return;
     $("sales-dedupe-summary").textContent = "Scanning...";
-    // This has to see every sale to find every split pair -- a single
-    // .limit(10000) silently came back with only the oldest 1000 rows
-    // (Supabase's server-side cap, regardless of what .limit() asks for),
-    // which is why a real split invoice from late 2025 wasn't found even
-    // though an earlier one from 2024 was. fetchAllPages() pages through
-    // with .range() so nothing past row #1000 goes missing.
-    const { data, error } = await fetchAllPages((from, to) =>
-      sb.from("sales")
+    // Optional -- narrows the scan to one Xero invoice no. (a "contains"
+    // match, so a partial number like "11707" still finds "INV-11707").
+    // Handy both for the normal case (going straight to a specific
+    // invoice instead of waiting on a full scan) and as a diagnostic: if
+    // searching one exact invoice still comes back with "Scanned 0
+    // rows", that's a real, narrow thing to check (is this row even
+    // visible to this login / RLS?) instead of a guess about caching or
+    // matching logic on the full-table scan.
+    const invoiceFilter = $("sales-dedupe-invoice-filter").value.trim();
+    // This has to see every matching sale to find every split pair -- a
+    // single .limit(10000) silently came back with only the oldest 1000
+    // rows (Supabase's server-side cap, regardless of what .limit() asks
+    // for), which is why a real split invoice from late 2025 wasn't found
+    // even though an earlier one from 2024 was. fetchAllPages() pages
+    // through with .range() so nothing past row #1000 goes missing.
+    const { data, error } = await fetchAllPages((from, to) => {
+      let q = sb.from("sales")
         .select("id,trx_date,tradename,invoice_no,total_amount,amount_received,tax_withheld,reference_person,mode_of_payment,business_entity,remarks")
         .is("deleted_at", null)
-        .not("invoice_no", "is", null)
-        .order("trx_date", { ascending: true })
-        .order("id", { ascending: true })
-        .range(from, to)
-    );
+        .not("invoice_no", "is", null);
+      if (invoiceFilter) q = q.ilike("invoice_no", `%${invoiceFilter}%`);
+      return q.order("trx_date", { ascending: true }).order("id", { ascending: true }).range(from, to);
+    });
     if (error) { $("sales-dedupe-summary").textContent = ""; return toast(error.message, true); }
     salesDedupeScannedCount = (data || []).length;
+    salesDedupeLastFilter = invoiceFilter;
 
     // Matching used to also require the same total_amount, which turned
     // out to be too strict -- a real split pair (e.g. INV-12710, BRIONES
@@ -1020,13 +1033,14 @@
 
   function renderSalesDedupeResults() {
     const panel = $("sales-dedupe-results");
+    const scope = salesDedupeLastFilter ? `matching "${salesDedupeLastFilter}"` : "with an invoice no.";
     if (!salesDedupeGroups.length) {
-      $("sales-dedupe-summary").textContent = `Scanned ${salesDedupeScannedCount.toLocaleString()} sales rows with an invoice no. -- no split payments found (matched by same Xero invoice no. + tradename).`;
+      $("sales-dedupe-summary").textContent = `Scanned ${salesDedupeScannedCount.toLocaleString()} sales row(s) ${scope} -- no split payments found (matched by same Xero invoice no. + tradename).`;
       panel.style.display = "none";
       return;
     }
     const reviewCount = salesDedupeGroups.filter((g) => g.needsReview).length;
-    $("sales-dedupe-summary").textContent = `Scanned ${salesDedupeScannedCount.toLocaleString()} sales rows -- found ${salesDedupeGroups.length} matching group(s)${reviewCount ? `, ${reviewCount} flagged for a manual look` : ""}.`;
+    $("sales-dedupe-summary").textContent = `Scanned ${salesDedupeScannedCount.toLocaleString()} sales row(s) ${scope} -- found ${salesDedupeGroups.length} matching group(s)${reviewCount ? `, ${reviewCount} flagged for a manual look` : ""}.`;
     const tb = $("sales-dedupe-table").querySelector("tbody");
     tb.innerHTML = salesDedupeGroups
       .map((g, i) => {
