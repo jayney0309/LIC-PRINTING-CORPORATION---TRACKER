@@ -951,7 +951,7 @@
         const key = btn.dataset.sortDedupe;
         salesDedupeSort = salesDedupeSort && salesDedupeSort.key === key
           ? { key, dir: salesDedupeSort.dir === "asc" ? "desc" : "asc" }
-          : { key, dir: key === "invoice" || key === "employee" ? "asc" : "desc" }; // amounts default to biggest-first, text columns default to ascending (A-Z)
+          : { key, dir: key === "invoice" || key === "employee" || key === "firstdate" ? "asc" : "desc" }; // amounts default to biggest-first, text/date columns default to ascending (A-Z / earliest-first)
         renderSalesDedupeResults();
       })
     );
@@ -960,7 +960,7 @@
   let salesDedupeGroups = []; // [{ key, tradename, invoice_no, total_amount, rows: [...] }]
   let salesDedupeScannedCount = 0; // how many sales rows the last scan actually pulled in -- surfaced in the summary text as a sanity check (a low count after a hard refresh points at a caching problem, not a matching-logic problem)
   let salesDedupeLastFilter = ""; // the Xero invoice filter the last scan ran with, if any -- echoed back in the summary so it's clear whether the scan just ran was narrowed or full-table
-  let salesDedupeSort = null; // { key: "invoice"|"total"|"received"|"balance", dir: "asc"|"desc" } -- null means the invoice-no order scanForSplitSales() already sorted into
+  let salesDedupeSort = null; // { key: "invoice"|"firstdate"|"employee"|"total"|"received"|"balance", dir: "asc"|"desc" } -- null means the invoice-no order scanForSplitSales() already sorted into
   async function scanForSplitSales() {
     if (!requireDb()) return;
     $("sales-dedupe-summary").textContent = "Scanning...";
@@ -1038,7 +1038,12 @@
         const totalMismatch = rows.some((r) => Number(r.total_amount || 0).toFixed(2) !== totalAmount.toFixed(2));
         const tradenameMismatch = new Set(rows.map((r) => norm(r.tradename))).size > 1;
         const needsReview = otherWithholding || employeeMismatch || totalMismatch || tradenameMismatch;
-        return { key, tradename: keep.tradename, invoiceNo: keep.invoice_no, employee: keep.reference_person, totalAmount, combinedReceived, combinedBalance, status, rows, needsReview, otherWithholding, employeeMismatch, totalMismatch, tradenameMismatch };
+        // rows is already sorted oldest-first (the scan query orders by
+        // trx_date ascending), so keep.trx_date is the earliest payment
+        // date in the group -- surfaced as its own sortable column so a
+        // group can be found/ordered by when the first installment came
+        // in, not just by invoice no.
+        return { key, tradename: keep.tradename, invoiceNo: keep.invoice_no, employee: keep.reference_person, firstPaymentDate: keep.trx_date, totalAmount, combinedReceived, combinedBalance, status, rows, needsReview, otherWithholding, employeeMismatch, totalMismatch, tradenameMismatch };
       });
     // Sorted by Xero invoice no. (numeric-aware, so "INV-2" sorts before
     // "INV-10") rather than left in whatever order the groups happened to
@@ -1066,8 +1071,8 @@
     if (salesDedupeSort) {
       const { key, dir } = salesDedupeSort;
       salesDedupeGroups.sort((a, b) => {
-        if (key === "invoice" || key === "employee") {
-          const getText = key === "invoice" ? (g) => g.invoiceNo : (g) => g.employee;
+        if (key === "invoice" || key === "employee" || key === "firstdate") {
+          const getText = key === "invoice" ? (g) => g.invoiceNo : key === "employee" ? (g) => g.employee : (g) => g.firstPaymentDate;
           const cmp = String(getText(a) || "").localeCompare(String(getText(b) || ""), undefined, { numeric: true });
           return dir === "asc" ? cmp : -cmp;
         }
@@ -1094,6 +1099,7 @@
         return `<tr style="${g.needsReview ? "background:var(--warn-soft);" : ""}">
           <td><input type="checkbox" data-dedupe-merge="${i}" ${g.needsReview ? "" : "checked"} /></td>
           <td>${escapeHtml(g.invoiceNo || "")}</td>
+          <td>${fmtDate(g.firstPaymentDate)}</td>
           <td>${escapeHtml(g.tradename || "")}${g.tradenameMismatch ? " ⚠" : ""}</td>
           <td>${escapeHtml(g.employee || "")}${g.employeeMismatch ? " ⚠" : ""}</td>
           <td class="num">₱ ${fmtMoney(g.totalAmount)}${g.totalMismatch ? " ⚠" : ""}</td>
