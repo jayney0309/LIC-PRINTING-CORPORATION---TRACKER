@@ -981,26 +981,27 @@
     salesDedupeScannedCount = (data || []).length;
     salesDedupeLastFilter = invoiceFilter;
 
-    // Matching used to also require the same total_amount, which turned
-    // out to be too strict -- a real split pair (e.g. INV-12710, BRIONES
-    // PEST CONTROL SERVICES) with the same invoice no. and tradename,
-    // visibly the same total in Sales Search, still wasn't grouped. Rather
-    // than chase whatever subtle per-row difference (a typo, a rounding
-    // difference between how each row's total got entered, an invisible
-    // extra space) was defeating an exact numeric match, matching now
-    // only requires invoice no. + tradename -- the two things that
-    // actually identify "the same invoice" -- and a total-amount mismatch
-    // within a group is flagged "check first" below instead of silently
-    // preventing the group from ever being found.
+    // Matching is now on Xero invoice no. ALONE. It used to also require
+    // the same tradename and total_amount, but Jamie pointed out the
+    // tradename recorded on a sale is sometimes an incomplete/abbreviated
+    // version of the customer's name from one row to the next (and the
+    // total had its own mismatch issue, see 0o) -- either one being even
+    // slightly different was silently hiding real split invoices from the
+    // scan. The Xero invoice no. is the one field that's actually
+    // guaranteed to identify "the same invoice", so that's now the only
+    // thing grouping depends on. A group whose rows disagree on
+    // tradename or total is flagged "check first" below (left unchecked
+    // by default) instead of either being hidden or blindly merged --
+    // two genuinely different invoices are extremely unlikely to share an
+    // exact Xero invoice no. by coincidence, but it's still surfaced for
+    // a human look rather than assumed.
     const norm = (s) => String(s || "").trim().toUpperCase().replace(/\s+/g, " ");
     const groups = {};
     (data || []).forEach((r) => {
       const inv = norm(r.invoice_no);
-      const trade = norm(r.tradename);
-      if (!inv || !trade) return; // need both to match on -- never treat these as duplicates
-      const key = inv + "||" + trade;
-      groups[key] = groups[key] || [];
-      groups[key].push(r);
+      if (!inv) return;
+      groups[inv] = groups[inv] || [];
+      groups[inv].push(r);
     });
 
     salesDedupeGroups = Object.entries(groups)
@@ -1012,9 +1013,9 @@
         // only runs from the Daily Sales save form, not from this tool, so
         // changing Tax withheld here could leave a 2307 record out of
         // sync. If withholding shows up on more than one row in a group,
-        // the rows disagree on Employee, or they disagree on Total
-        // amount, that's flagged below and left unchecked by default for
-        // a manual look instead of guessed at.
+        // the rows disagree on Employee, Tradename, or Total amount,
+        // that's flagged below and left unchecked by default for a
+        // manual look instead of guessed at.
         const keep = rows[0];
         const totalAmount = Number(keep.total_amount || 0);
         const combinedReceived = rows.reduce((sum, r) => sum + Number(r.amount_received || 0), 0);
@@ -1024,8 +1025,9 @@
         const otherWithholding = rows.slice(1).some((r) => Number(r.tax_withheld || 0) > 0);
         const employeeMismatch = new Set(rows.map((r) => (r.reference_person || "").trim().toUpperCase())).size > 1;
         const totalMismatch = rows.some((r) => Number(r.total_amount || 0).toFixed(2) !== totalAmount.toFixed(2));
-        const needsReview = otherWithholding || employeeMismatch || totalMismatch;
-        return { key, tradename: keep.tradename, invoiceNo: keep.invoice_no, totalAmount, combinedReceived, combinedBalance, status, rows, needsReview, otherWithholding, employeeMismatch, totalMismatch };
+        const tradenameMismatch = new Set(rows.map((r) => norm(r.tradename))).size > 1;
+        const needsReview = otherWithholding || employeeMismatch || totalMismatch || tradenameMismatch;
+        return { key, tradename: keep.tradename, invoiceNo: keep.invoice_no, totalAmount, combinedReceived, combinedBalance, status, rows, needsReview, otherWithholding, employeeMismatch, totalMismatch, tradenameMismatch };
       });
 
     renderSalesDedupeResults();
@@ -1035,7 +1037,7 @@
     const panel = $("sales-dedupe-results");
     const scope = salesDedupeLastFilter ? `matching "${salesDedupeLastFilter}"` : "with an invoice no.";
     if (!salesDedupeGroups.length) {
-      $("sales-dedupe-summary").textContent = `Scanned ${salesDedupeScannedCount.toLocaleString()} sales row(s) ${scope} -- no split payments found (matched by same Xero invoice no. + tradename).`;
+      $("sales-dedupe-summary").textContent = `Scanned ${salesDedupeScannedCount.toLocaleString()} sales row(s) ${scope} -- no split payments found (matched by same Xero invoice no.).`;
       panel.style.display = "none";
       return;
     }
@@ -1048,17 +1050,18 @@
           g.otherWithholding ? "Tax withheld is set on more than one row -- check before merging" : "",
           g.employeeMismatch ? "Employee differs between rows -- check which one should get the commission" : "",
           g.totalMismatch ? "Total amount differs between rows -- confirm these are really the same invoice before merging" : "",
+          g.tradenameMismatch ? "Tradename differs between rows (e.g. one is abbreviated) -- confirm it's really the same customer before merging" : "",
         ].filter(Boolean).join("; ");
         return `<tr style="${g.needsReview ? "background:var(--warn-soft);" : ""}">
           <td><input type="checkbox" data-dedupe-merge="${i}" ${g.needsReview ? "" : "checked"} /></td>
           <td>${escapeHtml(g.invoiceNo || "")}</td>
-          <td>${escapeHtml(g.tradename || "")}</td>
+          <td>${escapeHtml(g.tradename || "")}${g.tradenameMismatch ? " ⚠" : ""}</td>
           <td class="num">₱ ${fmtMoney(g.totalAmount)}${g.totalMismatch ? " ⚠" : ""}</td>
           <td class="num">${g.rows.length}</td>
           <td class="num">₱ ${fmtMoney(g.combinedReceived)}</td>
           <td class="num">₱ ${fmtMoney(g.combinedBalance)}</td>
           <td>${statusBadge(g.status)}${g.needsReview ? ` <span class="badge warn" title="${reasons}">check first</span>` : ""}</td>
-          <td>${g.rows.map((r) => `${fmtDate(r.trx_date)} (₱${fmtMoney(r.total_amount)})`).join(", ")}</td>
+          <td>${g.rows.map((r) => `${fmtDate(r.trx_date)} (₱${fmtMoney(r.total_amount)}${g.tradenameMismatch ? `, "${escapeHtml(r.tradename || "")}"` : ""})`).join(", ")}</td>
         </tr>`;
       })
       .join("");
