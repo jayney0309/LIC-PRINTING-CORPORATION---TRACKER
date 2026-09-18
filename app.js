@@ -2189,8 +2189,18 @@
     // that several years of history are loaded, and this page exists
     // specifically so a record can always be found and fixed here, so it
     // must not silently cap out early.
+    // v_sales_status carries every row from `sales`, deleted or not, and
+    // this query never filtered deleted_at -- so a row already moved to
+    // Trash (soft-deleted) still showed up here as if it were live, with
+    // nothing marking it as gone. That's how a Xero invoice could show 2
+    // rows here while "Find & merge split invoice payments" -- which
+    // correctly excludes deleted rows, same as everywhere else in the
+    // app -- only counted 1: one of the 2 rows shown here was already in
+    // Trash. Filtering it out here now matches every other view (Daily
+    // Sales, Receivables, Cash Disbursement, ...) and this specific case
+    // is worth checking in Audit & Integrity -> Trash.
     const buildQ = (from_, to_) => {
-      let q = sb.from("v_sales_status").select("*").order("trx_date", { ascending: false });
+      let q = sb.from("v_sales_status").select("*").is("deleted_at", null).order("trx_date", { ascending: false });
       if (name) q = q.or(`tradename.ilike.%${name}%,reference_person.ilike.%${name}%`);
       if (term) q = q.or(`invoice_no.ilike.%${term}%,bir_receipt_no.ilike.%${term}%`);
       if (from) q = q.gte("trx_date", from);
