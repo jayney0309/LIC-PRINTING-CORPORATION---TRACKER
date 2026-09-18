@@ -193,8 +193,14 @@
           <p class="section-note">Every group is checked by default, except groups flagged "check first" (Tax withheld set on more than one row, or the rows disagree on Employee, Tradename, or Total amount) — those are left unchecked for you to look at before merging. A Tradename or Total mismatch is usually harmless (an abbreviated name, a typo) but occasionally means two different transactions coincidentally reused the same invoice no. — check the rows before merging those. Also uncheck any group that's a plain duplicate entry (the same payment logged twice) rather than a real split payment — merging sums Amount received across every row in the group, so that would overstate how much was actually paid.</p>
           <div class="table-wrap"><table class="data" id="sales-dedupe-table">
             <thead><tr>
-              <th></th><th>Xero Invoice</th><th>Tradename</th><th class="num">Total</th><th># rows</th>
-              <th class="num">Combined received</th><th class="num">Combined balance</th><th>Resulting status</th><th>Dates &amp; totals involved</th>
+              <th></th>
+              <th><button type="button" class="btn ghost small" data-sort-dedupe="invoice" style="padding:2px 4px;">Xero Invoice<span class="sort-arrow"></span></button></th>
+              <th>Tradename</th>
+              <th class="num"><button type="button" class="btn ghost small" data-sort-dedupe="total" style="padding:2px 4px;">Total<span class="sort-arrow"></span></button></th>
+              <th># rows</th>
+              <th class="num"><button type="button" class="btn ghost small" data-sort-dedupe="received" style="padding:2px 4px;">Combined received<span class="sort-arrow"></span></button></th>
+              <th class="num"><button type="button" class="btn ghost small" data-sort-dedupe="balance" style="padding:2px 4px;">Combined balance<span class="sort-arrow"></span></button></th>
+              <th>Resulting status</th><th>Dates &amp; totals involved</th>
             </tr></thead>
             <tbody></tbody>
           </table></div>
@@ -1274,6 +1280,6 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="config.js" onerror="console.warn('config.js not found — copy config.example.js to config.js')"></script>
-<script src="app.js?v=20260918"></script>
+<script src="app.js?v=20260918b"></script>
 </body>
 </html>

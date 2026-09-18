@@ -946,14 +946,25 @@
       $("sales-dedupe-results").style.display = "none";
       $("sales-dedupe-summary").textContent = "";
     });
+    document.querySelectorAll("#sales-dedupe-table [data-sort-dedupe]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const key = btn.dataset.sortDedupe;
+        salesDedupeSort = salesDedupeSort && salesDedupeSort.key === key
+          ? { key, dir: salesDedupeSort.dir === "asc" ? "desc" : "asc" }
+          : { key, dir: key === "invoice" ? "asc" : "desc" }; // amounts default to biggest-first, invoice defaults to ascending
+        renderSalesDedupeResults();
+      })
+    );
   }
 
   let salesDedupeGroups = []; // [{ key, tradename, invoice_no, total_amount, rows: [...] }]
   let salesDedupeScannedCount = 0; // how many sales rows the last scan actually pulled in -- surfaced in the summary text as a sanity check (a low count after a hard refresh points at a caching problem, not a matching-logic problem)
   let salesDedupeLastFilter = ""; // the Xero invoice filter the last scan ran with, if any -- echoed back in the summary so it's clear whether the scan just ran was narrowed or full-table
+  let salesDedupeSort = null; // { key: "invoice"|"total"|"received"|"balance", dir: "asc"|"desc" } -- null means the invoice-no order scanForSplitSales() already sorted into
   async function scanForSplitSales() {
     if (!requireDb()) return;
     $("sales-dedupe-summary").textContent = "Scanning...";
+    salesDedupeSort = null; // start each fresh scan back at invoice-no order
     // Optional -- narrows the scan to one Xero invoice no. (a "contains"
     // match, so a partial number like "11707" still finds "INV-11707").
     // Handy both for the normal case (going straight to a specific
@@ -1048,6 +1059,28 @@
     }
     const reviewCount = salesDedupeGroups.filter((g) => g.needsReview).length;
     $("sales-dedupe-summary").textContent = `Scanned ${salesDedupeScannedCount.toLocaleString()} sales row(s) ${scope} -- found ${salesDedupeGroups.length} matching group(s)${reviewCount ? `, ${reviewCount} flagged for a manual look` : ""}.`;
+    // Sorted in place (not a copy) -- the checked/unchecked boxes below are
+    // keyed by their position in salesDedupeGroups (data-dedupe-merge="i"),
+    // read straight out of that array again at merge time, so the row
+    // order shown here has to be the array's actual order.
+    if (salesDedupeSort) {
+      const { key, dir } = salesDedupeSort;
+      salesDedupeGroups.sort((a, b) => {
+        if (key === "invoice") {
+          const cmp = String(a.invoiceNo || "").localeCompare(String(b.invoiceNo || ""), undefined, { numeric: true });
+          return dir === "asc" ? cmp : -cmp;
+        }
+        const get = key === "total" ? (g) => g.totalAmount : key === "received" ? (g) => g.combinedReceived : (g) => g.combinedBalance;
+        const cmp = get(a) - get(b);
+        return dir === "asc" ? cmp : -cmp;
+      });
+    }
+    document.querySelectorAll("#sales-dedupe-table [data-sort-dedupe]").forEach((btn) => {
+      const key = btn.dataset.sortDedupe;
+      const arrow = btn.querySelector(".sort-arrow");
+      if (!arrow) return;
+      arrow.textContent = salesDedupeSort && salesDedupeSort.key === key ? (salesDedupeSort.dir === "asc" ? " ▲" : " ▼") : "";
+    });
     const tb = $("sales-dedupe-table").querySelector("tbody");
     tb.innerHTML = salesDedupeGroups
       .map((g, i) => {
