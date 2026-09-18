@@ -951,7 +951,7 @@
         const key = btn.dataset.sortDedupe;
         salesDedupeSort = salesDedupeSort && salesDedupeSort.key === key
           ? { key, dir: salesDedupeSort.dir === "asc" ? "desc" : "asc" }
-          : { key, dir: key === "invoice" ? "asc" : "desc" }; // amounts default to biggest-first, invoice defaults to ascending
+          : { key, dir: key === "invoice" || key === "employee" ? "asc" : "desc" }; // amounts default to biggest-first, text columns default to ascending (A-Z)
         renderSalesDedupeResults();
       })
     );
@@ -1038,7 +1038,7 @@
         const totalMismatch = rows.some((r) => Number(r.total_amount || 0).toFixed(2) !== totalAmount.toFixed(2));
         const tradenameMismatch = new Set(rows.map((r) => norm(r.tradename))).size > 1;
         const needsReview = otherWithholding || employeeMismatch || totalMismatch || tradenameMismatch;
-        return { key, tradename: keep.tradename, invoiceNo: keep.invoice_no, totalAmount, combinedReceived, combinedBalance, status, rows, needsReview, otherWithholding, employeeMismatch, totalMismatch, tradenameMismatch };
+        return { key, tradename: keep.tradename, invoiceNo: keep.invoice_no, employee: keep.reference_person, totalAmount, combinedReceived, combinedBalance, status, rows, needsReview, otherWithholding, employeeMismatch, totalMismatch, tradenameMismatch };
       });
     // Sorted by Xero invoice no. (numeric-aware, so "INV-2" sorts before
     // "INV-10") rather than left in whatever order the groups happened to
@@ -1066,8 +1066,9 @@
     if (salesDedupeSort) {
       const { key, dir } = salesDedupeSort;
       salesDedupeGroups.sort((a, b) => {
-        if (key === "invoice") {
-          const cmp = String(a.invoiceNo || "").localeCompare(String(b.invoiceNo || ""), undefined, { numeric: true });
+        if (key === "invoice" || key === "employee") {
+          const getText = key === "invoice" ? (g) => g.invoiceNo : (g) => g.employee;
+          const cmp = String(getText(a) || "").localeCompare(String(getText(b) || ""), undefined, { numeric: true });
           return dir === "asc" ? cmp : -cmp;
         }
         const get = key === "total" ? (g) => g.totalAmount : key === "received" ? (g) => g.combinedReceived : (g) => g.combinedBalance;
@@ -1094,12 +1095,13 @@
           <td><input type="checkbox" data-dedupe-merge="${i}" ${g.needsReview ? "" : "checked"} /></td>
           <td>${escapeHtml(g.invoiceNo || "")}</td>
           <td>${escapeHtml(g.tradename || "")}${g.tradenameMismatch ? " ⚠" : ""}</td>
+          <td>${escapeHtml(g.employee || "")}${g.employeeMismatch ? " ⚠" : ""}</td>
           <td class="num">₱ ${fmtMoney(g.totalAmount)}${g.totalMismatch ? " ⚠" : ""}</td>
           <td class="num">${g.rows.length}</td>
           <td class="num">₱ ${fmtMoney(g.combinedReceived)}</td>
           <td class="num">₱ ${fmtMoney(g.combinedBalance)}</td>
           <td>${statusBadge(g.status)}${g.needsReview ? ` <span class="badge warn" title="${reasons}">check first</span>` : ""}</td>
-          <td>${g.rows.map((r) => `${fmtDate(r.trx_date)} (₱${fmtMoney(r.total_amount)}${g.tradenameMismatch ? `, "${escapeHtml(r.tradename || "")}"` : ""})`).join(", ")}</td>
+          <td>${g.rows.map((r) => `${fmtDate(r.trx_date)} (₱${fmtMoney(r.total_amount)}${g.tradenameMismatch ? `, "${escapeHtml(r.tradename || "")}"` : ""}${g.employeeMismatch ? `, ${escapeHtml(r.reference_person || "(none)")}` : ""})`).join(", ")}</td>
         </tr>`;
       })
       .join("");
