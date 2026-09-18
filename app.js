@@ -1029,6 +1029,11 @@
         const needsReview = otherWithholding || employeeMismatch || totalMismatch || tradenameMismatch;
         return { key, tradename: keep.tradename, invoiceNo: keep.invoice_no, totalAmount, combinedReceived, combinedBalance, status, rows, needsReview, otherWithholding, employeeMismatch, totalMismatch, tradenameMismatch };
       });
+    // Sorted by Xero invoice no. (numeric-aware, so "INV-2" sorts before
+    // "INV-10") rather than left in whatever order the groups happened to
+    // form in -- makes it easy to scan down the results and match them up
+    // against Sales Search or Xero itself.
+    salesDedupeGroups.sort((a, b) => String(a.invoiceNo || "").localeCompare(String(b.invoiceNo || ""), undefined, { numeric: true }));
 
     renderSalesDedupeResults();
   }
