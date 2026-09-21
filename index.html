@@ -658,7 +658,7 @@
 
     <!-- ======================= COMMISSION ======================= -->
     <section id="view-commission" class="view">
-      <p class="section-note">10% of each fully-paid sale with an employee assigned, auto-computed — still needs an admin to approve before it's final, and is only actually handed to the employee once marked Paid. Not limited to a date range; every commission still waiting for approval shows up here regardless of when the sale happened.</p>
+      <p class="section-note">10% of each fully-paid sale with an employee assigned, auto-computed — still needs an admin to approve before it's final, and is only actually handed to the employee once marked Paid. Not limited to a date range; every commission still waiting for approval shows up here regardless of when the sale happened. The Commission amount is editable (admin only) for cases where the actual agreed commission isn't exactly 10% of the sale.</p>
       <div class="panel">
         <div class="filters">
           <div class="field"><label>Status</label>
@@ -686,10 +686,13 @@
             <select id="commission-f-employee"><option value="">All</option></select>
           </div>
           <div class="field"><label>Month</label><input type="month" id="commission-f-month" /></div>
+          <div class="field"><label>Date paid — from</label><input type="date" id="commission-f-paid-from" /></div>
+          <div class="field"><label>Date paid — to</label><input type="date" id="commission-f-paid-to" /></div>
           <div class="field wide"><label>Search</label><input id="commission-f-search" placeholder="Employee, tradename, or Xero invoice no..." /></div>
           <button class="btn small accent" id="commission-f-apply">Search</button>
           <button class="btn small ghost" id="commission-f-clear">Clear</button>
         </div>
+        <p class="hint" id="commission-totals" style="margin:-4px 0 10px;"></p>
         <div class="filters" id="commission-bulk-bar" style="display:none;">
           <span class="hint" id="commission-bulk-count">0 selected</span>
           <div class="field"><label>Date paid</label><input type="date" id="commission-bulk-date" /></div>
@@ -1282,6 +1285,6 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="config.js" onerror="console.warn('config.js not found — copy config.example.js to config.js')"></script>
-<script src="app.js?v=20260918e"></script>
+<script src="app.js?v=20260919"></script>
 </body>
 </html>

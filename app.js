@@ -3118,7 +3118,7 @@
   function initCommissionForm() {
     populateEmployeeSelects();
     $("commission-f-apply").addEventListener("click", loadCommissions);
-    ["commission-f-status", "commission-f-entity", "commission-f-paid", "commission-f-employee", "commission-f-month"].forEach((id) => $(id).addEventListener("change", loadCommissions));
+    ["commission-f-status", "commission-f-entity", "commission-f-paid", "commission-f-employee", "commission-f-month", "commission-f-paid-from", "commission-f-paid-to"].forEach((id) => $(id).addEventListener("change", loadCommissions));
     $("commission-f-search").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); loadCommissions(); }
     });
@@ -3128,6 +3128,8 @@
       $("commission-f-entity").value = "";
       $("commission-f-employee").value = "";
       $("commission-f-month").value = "";
+      $("commission-f-paid-from").value = "";
+      $("commission-f-paid-to").value = "";
       $("commission-f-search").value = "";
       loadCommissions();
     });
@@ -3169,6 +3171,8 @@
     const entity = $("commission-f-entity").value;
     const employee = $("commission-f-employee").value;
     const month = $("commission-f-month").value;
+    const paidFrom = $("commission-f-paid-from").value;
+    const paidTo = $("commission-f-paid-to").value;
     const search = $("commission-f-search").value.trim();
     // Embed the linked sale so the Xero invoice no., tradename and amount
     // received show up here without duplicating those columns onto
@@ -3189,6 +3193,13 @@
         const nextMonth = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
         q = q.gte("trx_date", `${month}-01`).lt("trx_date", nextMonth);
       }
+      // Date paid range -- filters on paid_at itself (when the commission
+      // was actually handed over), separate from the Payment dropdown
+      // above (which only asks paid vs. unpaid, not when). A row with no
+      // paid_at is naturally excluded by either bound, so this doesn't
+      // need to be combined with Payment = Paid to make sense.
+      if (paidFrom) q = q.gte("paid_at", paidFrom);
+      if (paidTo) q = q.lte("paid_at", paidTo);
       // "Staff" on old, bulk-imported sales sometimes holds a placeholder
       // instead of an actual employee ("WALK IN", anything starting with
       // "LIC" -- the company itself, not a person -- or "DENNIS", the
@@ -3247,6 +3258,26 @@
       if (!arrow) return;
       arrow.textContent = commissionSort && commissionSort.key === key ? (commissionSort.dir === "asc" ? " ▲" : " ▼") : "";
     });
+    // Totals reflect whatever's currently loaded (i.e. every filter above,
+    // including the Employee dropdown) -- so picking one employee shows
+    // just their total, and leaving it on "All" shows a per-employee
+    // breakdown of everything currently on screen.
+    const totalsByEmployee = {};
+    rows.forEach((c) => {
+      const key = c.staff_name || "(no name)";
+      totalsByEmployee[key] = totalsByEmployee[key] || { total: 0, count: 0 };
+      totalsByEmployee[key].total += Number(c.commission_amount || 0);
+      totalsByEmployee[key].count += 1;
+    });
+    const grandTotal = rows.reduce((sum, c) => sum + Number(c.commission_amount || 0), 0);
+    const totalsEl = $("commission-totals");
+    if (totalsEl) {
+      const perEmployee = Object.entries(totalsByEmployee).sort((a, b) => b[1].total - a[1].total);
+      totalsEl.innerHTML = rows.length
+        ? `<strong>Total shown: ₱ ${fmtMoney(grandTotal)}</strong> (${rows.length} commission${rows.length === 1 ? "" : "s"})` +
+          (perEmployee.length > 1 ? " — " + perEmployee.map(([name, v]) => `${escapeHtml(name)}: ₱ ${fmtMoney(v.total)} (${v.count})`).join(", ") : "")
+        : "";
+    }
     const tb = $("commission-table").querySelector("tbody");
     tb.innerHTML = rows.length
       ? rows.map((c) => `<tr>
@@ -3255,7 +3286,9 @@
           <td>${escapeHtml(c.sales?.invoice_no || "")}</td><td>${escapeHtml(c.sales?.tradename || "")}</td>
           <td>${escapeHtml(c.staff_name)}</td>
           <td class="num">₱ ${fmtMoney(c.sale_total)}</td><td class="num">₱ ${fmtMoney(c.sales?.amount_received)}</td>
-          <td class="num">₱ ${fmtMoney(c.commission_amount)}</td>
+          <td class="num">${currentRole === "admin"
+            ? `<input type="number" step="0.01" min="0" data-comm-amount-input="${c.id}" data-comm-sale-total="${c.sale_total}" value="${Number(c.commission_amount || 0)}" style="width:88px; text-align:right;" title="Auto-computed at ${(Number(c.commission_rate || 0.10) * 100).toFixed(2)}% of the sale total -- edit if the actual agreed commission is different" />`
+            : `₱ ${fmtMoney(c.commission_amount)}`}</td>
           <td>${c.status === "approved" ? statusBadge("FULLY PAID") : statusBadge("UNPAID")}${c.needs_review ? ' <span class="badge warn">changed since approval</span>' : ""}</td>
           <td>${c.paid_at ? statusBadge("FULLY PAID") : statusBadge("UNPAID")}</td>
           <td>${c.paid_at ? fmtDate(c.paid_at) : ""}</td>
@@ -3269,6 +3302,33 @@
     $("commission-select-all").checked = false;
     updateCommissionBulkBar();
     tb.querySelectorAll("[data-comm-select]").forEach((cb) => cb.addEventListener("change", updateCommissionBulkBar));
+    // Manual commission override -- the auto-computed 10% doesn't always
+    // match what was actually agreed for a particular sale. Saves both the
+    // new peso amount AND a matching commission_rate (amount / sale_total)
+    // instead of just commission_amount, because sync_staff_commission()
+    // recomputes commission_amount from commission_rate (falling back to
+    // 10% only when commission_rate is null) every time the underlying
+    // sale row is updated for any reason -- without also updating the
+    // rate, an unrelated future edit to that sale would silently overwrite
+    // this correction back to a flat 10%.
+    tb.querySelectorAll("[data-comm-amount-input]").forEach((input) =>
+      input.addEventListener("change", async () => {
+        const id = input.dataset.commAmountInput;
+        const saleTotal = Number(input.dataset.commSaleTotal || 0);
+        const newAmount = Number(input.value);
+        if (!Number.isFinite(newAmount) || newAmount < 0) {
+          toast("Enter a valid, non-negative commission amount", true);
+          loadCommissions();
+          return;
+        }
+        const update = { commission_amount: newAmount };
+        if (saleTotal > 0) update.commission_rate = Number((newAmount / saleTotal).toFixed(4));
+        const { error: err2 } = await sb.from("staff_commissions").update(update).eq("id", id);
+        if (err2) { toast(err2.message, true); loadCommissions(); return; }
+        toast("Commission amount updated");
+        loadCommissions();
+      })
+    );
     tb.querySelectorAll("[data-approve-comm]").forEach((btn) =>
       btn.addEventListener("click", async () => {
         const { data: { user } } = await sb.auth.getUser();
