@@ -169,6 +169,34 @@ table.data tbody tr:last-child td { border-bottom: none; }
 .muted { color: var(--ink-faint); }
 .empty-row td { text-align: center; color: var(--ink-faint); padding: 26px 10px; }
 
+/* ---------- frozen columns (Commission tab) ---------- */
+/* Keeps Select/Date/Entity/Xero Invoice pinned on the left while scrolling
+   right to the Commission column -- so the row you're editing stays
+   identifiable instead of scrolling off-screen. Widths are fixed (not just
+   min-width) so each column's "left" offset below stays accurate; ellipsis
+   handles the rare case where content would've overflowed that width. */
+#commission-table th:nth-child(1), #commission-table td:nth-child(1) {
+  position: sticky; left: 0; z-index: 3; background: var(--surface);
+  width: 38px; min-width: 38px; max-width: 38px;
+}
+#commission-table th:nth-child(2), #commission-table td:nth-child(2) {
+  position: sticky; left: 38px; z-index: 3; background: var(--surface);
+  width: 100px; min-width: 100px; max-width: 100px; overflow: hidden; text-overflow: ellipsis;
+}
+#commission-table th:nth-child(3), #commission-table td:nth-child(3) {
+  position: sticky; left: 138px; z-index: 3; background: var(--surface);
+  width: 90px; min-width: 90px; max-width: 90px; overflow: hidden; text-overflow: ellipsis;
+}
+#commission-table th:nth-child(4), #commission-table td:nth-child(4) {
+  position: sticky; left: 228px; z-index: 3; background: var(--surface);
+  width: 120px; min-width: 120px; max-width: 120px; overflow: hidden; text-overflow: ellipsis;
+  box-shadow: 2px 0 4px rgba(20, 35, 42, 0.10);
+}
+#commission-table th:nth-child(1), #commission-table th:nth-child(2),
+#commission-table th:nth-child(3), #commission-table th:nth-child(4) {
+  background: var(--surface-2); /* header keeps its own shade, above the plain-white body cells */
+}
+
 .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; }
 .badge.good { background: var(--good-soft); color: var(--good); }
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
