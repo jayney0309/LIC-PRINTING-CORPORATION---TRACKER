@@ -2148,6 +2148,7 @@
      Report tab which only ever holds rows that already have a BIR receipt.
      ===================================================================== */
   let lastSalesSearchRows = [];
+  let lastSalesSearchCreditNotes = {}; // { [sale_id]: { total_credited, cn_count } } -- side-fetch, see loadSalesSearch()
   // { key: "trx_date" | "tradename" | "invoice_no", dir: "asc" | "desc" } --
   // null keeps the server's default order (newest first). Set by clicking
   // a sortable column header; re-renders from lastSalesSearchRows so it
@@ -2186,7 +2187,7 @@
     const entity = $("salessearch-f-entity").value;
     const tb = $("salessearch-table").querySelector("tbody");
     if (!name && !term && !from && !to && !entity) {
-      tb.innerHTML = `<tr class="empty-row"><td colspan="11">Enter a name, an invoice number (Xero or BIR), or a date range to search</td></tr>`;
+      tb.innerHTML = `<tr class="empty-row"><td colspan="12">Enter a name, an invoice number (Xero or BIR), or a date range to search</td></tr>`;
       lastSalesSearchRows = [];
       return;
     }
@@ -2217,6 +2218,17 @@
     const { data, error } = await fetchAllPages(buildQ);
     if (error) return toast(error.message, true);
     lastSalesSearchRows = data || [];
+    // Credit notes are a separate table (see credit_notes / v_sale_credit_notes
+    // -- RMC No. 98-2026 compliance) so a sale that's had one issued against
+    // it still shows its ORIGINAL total_amount/balance here, unaltered; this
+    // side-fetch is only to surface a "Credit Notes" badge, it doesn't feed
+    // into any of the numbers above.
+    const saleIds = lastSalesSearchRows.map((r) => r.id);
+    lastSalesSearchCreditNotes = {};
+    if (saleIds.length) {
+      const { data: cnData, error: cnErr } = await sb.from("v_sale_credit_notes").select("*").in("sale_id", saleIds);
+      if (!cnErr) (cnData || []).forEach((c) => { lastSalesSearchCreditNotes[c.sale_id] = c; });
+    }
     renderSalesSearchRows();
   }
   function renderSalesSearchRows() {
@@ -2237,17 +2249,27 @@
     });
     const tb = $("salessearch-table").querySelector("tbody");
     tb.innerHTML = rows.length
-      ? rows.map((r) => `<tr>
+      ? rows.map((r) => {
+          const cn = lastSalesSearchCreditNotes[r.id];
+          return `<tr>
           <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.tradename)}</td><td>${escapeHtml(r.reference_person || "")}</td>
           <td>${escapeHtml(entityLabel(r.business_entity))}</td>
           <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.amount_received)}</td>
           <td class="num">₱ ${fmtMoney(r.balance)}</td><td>${statusBadge(r.status)}</td>
           <td>${escapeHtml(r.invoice_no || "")}</td><td>${escapeHtml(r.bir_receipt_no || "")}</td>
-          <td class="row-actions"><button type="button" class="btn small" data-ss-edit="${r.id}">Edit</button></td>
-        </tr>`).join("")
-      : `<tr class="empty-row"><td colspan="11">No sales match this search</td></tr>`;
+          <td class="row-actions">
+            <button type="button" class="btn small" data-ss-edit="${r.id}">Edit</button>
+            <button type="button" class="btn small ghost" data-ss-cn="${r.id}" title="Record a decrease against this invoice (return, allowance, discount, overbilling correction) without altering the original sale -- per RMC No. 98-2026">Credit Note</button>
+          </td>
+          <td>${cn ? `<span class="badge warn" title="${cn.cn_count} credit note(s) on file">- ₱ ${fmtMoney(cn.total_credited)}</span>` : ""}</td>
+        </tr>`;
+        }).join("")
+      : `<tr class="empty-row"><td colspan="12">No sales match this search</td></tr>`;
     tb.querySelectorAll("[data-ss-edit]").forEach((btn) =>
       btn.addEventListener("click", () => openSalesSearchEdit(rows.find((r) => String(r.id) === btn.dataset.ssEdit)))
+    );
+    tb.querySelectorAll("[data-ss-cn]").forEach((btn) =>
+      btn.addEventListener("click", () => openCreditNoteModal(rows.find((r) => String(r.id) === btn.dataset.ssCn)))
     );
   }
 
@@ -2415,6 +2437,61 @@
     const show = Number($("ssedit-taxwithheld").value || 0) > 0;
     $("ssedit-2307status-field").style.display = show ? "" : "none";
     $("ssedit-2307upload-field").style.display = show && $("ssedit-2307status").value === "yes" ? "" : "none";
+  }
+
+  /* =====================================================================
+     CREDIT NOTES (BIR RMC No. 98-2026) — a Credit Note records a DECREASE
+     against an already-recorded sale (return, allowance, discount,
+     overbilling correction) as its own linked row in `credit_notes`,
+     instead of editing the sale's Total Amount/Amount received directly.
+     Deliberately does NOT touch the sale itself or its generated `balance`
+     column -- see 35_credit_notes.sql for why. Opened from the "Credit
+     Note" button in Sales Search.
+     ===================================================================== */
+  function initCreditNoteModal() {
+    $("cn-close").addEventListener("click", closeCreditNoteModal);
+    $("cn-cancel").addEventListener("click", closeCreditNoteModal);
+    $("cn-overlay").addEventListener("click", (e) => {
+      if (e.target === $("cn-overlay")) closeCreditNoteModal();
+    });
+    $("cn-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!requireDb()) return;
+      const saleId = $("cn-sale-id").value;
+      const amount = Number($("cn-amount").value || 0);
+      if (!(amount > 0)) return toast("Enter a Credit Note amount greater than zero", true);
+      const { data: { user } } = await sb.auth.getUser();
+      const { error } = await sb.from("credit_notes").insert({
+        sale_id: saleId,
+        business_entity: creditNoteSaleEntity,
+        cn_date: $("cn-date").value,
+        cn_number: $("cn-number").value.trim() || null,
+        amount,
+        reason: $("cn-reason").value.trim(),
+        created_by: user?.email || null,
+      });
+      if (error) return toast(error.message, true);
+      toast("Credit Note saved");
+      closeCreditNoteModal();
+      loadSalesSearch();
+    });
+  }
+  let creditNoteSaleEntity = ""; // stashed from the sale row the modal was opened for -- credit_notes.business_entity is denormalized the same way staff_commissions.business_entity is
+  function openCreditNoteModal(r) {
+    if (!r) return;
+    creditNoteSaleEntity = r.business_entity || "";
+    $("cn-sale-id").value = r.id;
+    $("cn-sale-recap").textContent = `${r.invoice_no ? r.invoice_no + " — " : ""}${r.tradename || ""} — Total ₱ ${fmtMoney(r.total_amount)}, dated ${fmtDate(r.trx_date)}`;
+    $("cn-date").value = todayISO();
+    $("cn-number").value = "";
+    $("cn-amount").value = "";
+    $("cn-reason").value = "";
+    $("cn-msg").textContent = "";
+    $("cn-overlay").style.display = "flex";
+  }
+  function closeCreditNoteModal() {
+    $("cn-overlay").style.display = "none";
+    $("cn-form").reset();
   }
 
   /* =====================================================================
@@ -3982,7 +4059,50 @@
   }
   async function loadAuditView() {
     if (!requireDb()) return;
-    await Promise.all([loadClosures(), loadTrash(), loadAuditLog()]);
+    await Promise.all([loadClosures(), loadTrash(), loadCreditNotesRegister(), loadAuditLog()]);
+  }
+  function initCreditNotesRegister() {
+    $("cnreg-f-apply").addEventListener("click", loadCreditNotesRegister);
+    ["cnreg-f-entity", "cnreg-f-from", "cnreg-f-to"].forEach((id) => $(id).addEventListener("change", loadCreditNotesRegister));
+    $("cnreg-f-clear").addEventListener("click", () => {
+      $("cnreg-f-entity").value = "";
+      $("cnreg-f-from").value = "";
+      $("cnreg-f-to").value = "";
+      loadCreditNotesRegister();
+    });
+  }
+  // Register of every Credit Note issued (see credit_notes / 35_credit_notes.sql,
+  // BIR RMC No. 98-2026) -- the audit-facing list of every decrease recorded
+  // against an already-issued invoice, kept separate from that invoice's own
+  // (untouched) figures in Sales/Sales Search.
+  async function loadCreditNotesRegister() {
+    if (!requireDb()) return;
+    const entity = $("cnreg-f-entity").value;
+    const from = $("cnreg-f-from").value;
+    const to = $("cnreg-f-to").value;
+    const buildQ = (from_, to_) => {
+      let q = sb.from("credit_notes").select("*, sales(tradename, invoice_no)").is("deleted_at", null).order("cn_date", { ascending: false });
+      if (entity) q = q.eq("business_entity", entity);
+      if (from) q = q.gte("cn_date", from);
+      if (to) q = q.lte("cn_date", to);
+      return q.range(from_, to_);
+    };
+    const { data, error } = await fetchAllPages(buildQ);
+    if (error) return toast(error.message, true);
+    const tb = $("creditnotes-table").querySelector("tbody");
+    tb.innerHTML = (data || []).length
+      ? data.map((c) => `<tr>
+          <td>${fmtDate(c.cn_date)}</td><td>${escapeHtml(entityLabel(c.business_entity))}</td>
+          <td>${escapeHtml(c.sales?.invoice_no || "")}</td><td>${escapeHtml(c.sales?.tradename || "")}</td>
+          <td>${escapeHtml(c.cn_number || "")}</td>
+          <td class="num">₱ ${fmtMoney(c.amount)}</td>
+          <td>${escapeHtml(c.reason || "")}</td><td>${escapeHtml(c.created_by || "")}</td>
+          <td class="row-actions">${currentRole === "admin" ? `<button class="btn small danger" data-void-cn="${c.id}">Void</button>` : ""}</td>
+        </tr>`).join("")
+      : `<tr class="empty-row"><td colspan="9">No credit notes recorded yet</td></tr>`;
+    tb.querySelectorAll("[data-void-cn]").forEach((btn) =>
+      btn.addEventListener("click", () => softDeleteRow("credit_notes", btn.dataset.voidCn, loadCreditNotesRegister))
+    );
   }
   async function closeQuarter() {
     if (!requireDb()) return;
@@ -4115,6 +4235,8 @@
   initInvoicesForm();
   initSalesSearchForm();
   initSalesSearchEditModal();
+  initCreditNoteModal();
+  initCreditNotesRegister();
   initCashDisbursementForm();
   initExpensesReportForm();
   initWithholdingForm();
