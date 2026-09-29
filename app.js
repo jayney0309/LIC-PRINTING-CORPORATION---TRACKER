@@ -3153,8 +3153,8 @@
           <td class="num">${currentRole === "admin"
             ? `<input type="number" step="0.01" min="0" data-comm-amount-input="${c.id}" data-comm-sale-total="${c.sale_total}" value="${Number(c.commission_amount || 0)}" style="width:88px; text-align:right;" title="Auto-computed at ${(Number(c.commission_rate || 0.10) * 100).toFixed(2)}% of the sale total -- edit if the actual agreed commission is different" />`
             : `₱ ${fmtMoney(c.commission_amount)}`}</td>
-          <td>${c.status === "approved" ? statusBadge("FULLY PAID") : statusBadge("UNPAID")}${c.needs_review ? ' <span class="badge warn">changed since approval</span>' : ""}</td>
-          <td>${c.paid_at ? statusBadge("FULLY PAID") : statusBadge("UNPAID")}</td>
+          <td>${c.status === "approved" ? '<span class="badge good">Approved</span>' : '<span class="badge warn">Pending</span>'}${c.needs_review ? ' <span class="badge warn">changed since approval</span>' : ""}</td>
+          <td>${c.paid_at ? '<span class="badge good">Paid</span>' : '<span class="badge neutral">Not yet paid</span>'}</td>
           <td>${c.paid_at ? fmtDate(c.paid_at) : ""}</td>
           <td class="row-actions">
             ${currentRole === "admin" && c.status !== "approved" ? `<button class="btn small accent" data-approve-comm="${c.id}">Approve</button>` : ""}
