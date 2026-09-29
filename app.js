@@ -759,7 +759,7 @@
           <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.tradename)}</td><td>${escapeHtml(r.reference_person || "")}</td>
           <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.amount_received)}</td>
           <td class="num">₱ ${fmtMoney(r.balance)}</td><td>${statusBadge(r.status)}</td>
-          <td>${escapeHtml(r.mode_of_payment || "")}</td><td>${escapeHtml(r.invoice_no || "")}</td>
+          <td>${escapeHtml(r.mode_of_payment || "")}</td><td>${escapeHtml(r.invoice_no || "")}${r.linked_payment_label ? `<br><span class="hint">${escapeHtml(r.linked_payment_label)}</span>` : ""}</td>
           <td>${has2307.has(r.id) ? '<span class="badge good">2307</span>' : ""}</td>
           <td>${hasInvoice.has(r.id) ? '<span class="badge good">Filed</span>' : ""}</td>
           <td>
@@ -2262,7 +2262,7 @@
           <td>${escapeHtml(entityLabel(r.business_entity))}</td>
           <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.amount_received)}</td>
           <td class="num">₱ ${fmtMoney(r.balance)}</td><td>${statusBadge(r.status)}</td>
-          <td>${escapeHtml(r.invoice_no || "")}</td><td>${escapeHtml(r.bir_receipt_no || "")}</td>
+          <td>${escapeHtml(r.invoice_no || "")}${r.linked_payment_label ? `<br><span class="hint">${escapeHtml(r.linked_payment_label)}</span>` : ""}</td><td>${escapeHtml(r.bir_receipt_no || "")}</td>
           <td class="row-actions">
             <button type="button" class="btn small" data-ss-edit="${r.id}">Edit</button>
             <button type="button" class="btn small ghost" data-ss-cn="${r.id}" title="Record a decrease against this invoice (return, allowance, discount, overbilling correction) without altering the original sale -- per RMC No. 98-2026">Credit Note</button>

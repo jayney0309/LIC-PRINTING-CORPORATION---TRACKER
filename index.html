@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>LIC Printing Shop — Bookkeeping System</title>
-<link rel="stylesheet" href="style.css?v=20260921" />
+<link rel="stylesheet" href="style.css?v=20260929" />
 </head>
 <body>
 
@@ -183,7 +183,8 @@
           <h2>Find &amp; merge split invoice payments</h2>
           <span class="hint">Matches rows that share the same Xero invoice no.</span>
         </div>
-        <p class="section-note">When the same invoice was posted as more than one row — e.g. a partial payment logged as its own sale instead of updating the original — each row can show "Partial" even though the payments add up to full. Matching is by Xero invoice no. only (not tradename, since a customer's name isn't always entered the same way twice — sometimes it's abbreviated or incomplete on one row). Merging keeps the earliest row, adds the other row(s)' Amount received into it, and moves the rest to Trash (Audit &amp; Integrity), not erased. This also lets the commission trigger see the sale as fully paid, so it can show up For Approval.</p>
+        <p class="section-note"><strong>Merging is optional now.</strong> Rows that share the same Xero invoice no. are automatically linked and treated as one payment group in Daily Sales, Sales Search, and for staff commission — each installment keeps its own row and date (look for the "Payment X of Y" note under the Xero invoice no.), but once the group's combined Amount received covers the total, every row in it shows Fully Paid and the commission trigger fires. Use this tool only if you actually want to physically consolidate the rows into one (fewer rows to scroll through, one line item) — it's no longer needed just to get a split invoice to show Fully Paid.</p>
+        <p class="section-note">When the same invoice was posted as more than one row — e.g. a partial payment logged as its own sale instead of updating the original — this scans for those groups. Matching is by Xero invoice no. only (not tradename, since a customer's name isn't always entered the same way twice — sometimes it's abbreviated or incomplete on one row). Merging keeps the earliest row, adds the other row(s)' Amount received into it, and moves the rest to Trash (Audit &amp; Integrity), not erased.</p>
         <div class="filters">
           <div class="field"><label>Xero invoice no. (optional)</label><input id="sales-dedupe-invoice-filter" placeholder="Leave blank to scan every invoice" /></div>
           <button type="button" class="btn" id="sales-dedupe-scan">Scan for split payments</button>
@@ -1337,6 +1338,6 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="config.js" onerror="console.warn('config.js not found — copy config.example.js to config.js')"></script>
-<script src="app.js?v=20260929b"></script>
+<script src="app.js?v=20260929c"></script>
 </body>
 </html>
