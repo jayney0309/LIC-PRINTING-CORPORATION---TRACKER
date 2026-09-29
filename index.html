@@ -983,7 +983,7 @@
 
     <!-- ======================= REPORTS ======================= -->
     <section id="view-reports" class="view">
-      <p class="section-note">Monthly VAT summary computed live from the Sales Report and Expenses Report below, plus a read-only archive of your historical BIR declarations for reference. "Filing status" reflects whether that quarter has actually been closed in Audit &amp; Integrity → Filing periods for both entities — click a status badge to go there and close (or reopen) a quarter.</p>
+      <p class="section-note">Monthly VAT summary computed live from the Sales Report and Expenses Report below, plus a read-only archive of your historical BIR declarations for reference. Separated by business entity — LIC Printing Shop (Sole Proprietorship, VAT-registered) and LIC Printing Corporation (Non-VAT) are filed separately with BIR, so their figures are never blended into one row. "Filing status" reflects whether that quarter has actually been closed for that specific entity in Audit &amp; Integrity → Filing periods — click a status badge to go there and close (or reopen) a quarter.</p>
       <div class="panel">
         <div class="panel-head">
           <h2>Monthly VAT summary</h2>
@@ -1000,13 +1000,20 @@
               <option value="4">Q4 (Oct–Dec)</option>
             </select>
           </div>
+          <div class="field"><label>Entity</label>
+            <select id="reports-f-entity">
+              <option value="">All entities (separate rows)</option>
+              <option value="SOLE PROPRIETORSHIP">Sole Proprietorship only</option>
+              <option value="CORPORATION">Corporation only</option>
+            </select>
+          </div>
           <div class="field"><label>Search</label><input id="reports-f-search" placeholder="e.g. January or 2026" /></div>
           <button class="btn small accent" id="reports-f-apply">Search</button>
           <button class="btn small ghost" id="reports-f-clear">Clear</button>
         </div>
         <div class="table-wrap"><table class="data" id="reports-summary-table">
           <thead><tr>
-            <th>Month</th><th class="num">Gross sales</th><th class="num">Net sales</th><th class="num">VAT on sales</th>
+            <th>Month</th><th>Entity</th><th class="num">Gross sales</th><th class="num">Net sales</th><th class="num">VAT on sales</th>
             <th class="num">WTax on sales</th><th class="num">VAT expenses</th><th class="num">Non-VAT expenses</th>
             <th class="num">Total expenses</th><th class="num">Est. net</th><th>Filing status</th>
           </tr></thead>
@@ -1300,6 +1307,6 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="config.js" onerror="console.warn('config.js not found — copy config.example.js to config.js')"></script>
-<script src="app.js?v=20260929e"></script>
+<script src="app.js?v=20260929f"></script>
 </body>
 </html>

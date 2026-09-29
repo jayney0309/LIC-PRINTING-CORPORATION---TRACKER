@@ -3711,11 +3711,26 @@
   // just one shows as a partial so it's obvious one entity still needs it.
   // If the quarter is already in the past and neither entity has been
   // closed, that's flagged (not silently shown as "Filed").
-  function quarterFilingStatus(monthStr, closures) {
+  function quarterFilingStatus(monthStr, closures, forEntity) {
     const [y, m] = monthStr.slice(0, 7).split("-").map(Number);
     const rowQ = Math.ceil(m / 3);
     const periodLabel = `${y}-Q${rowQ}`;
     const closedEntities = new Set((closures || []).filter((c) => c.period_label === periodLabel).map((c) => c.business_entity));
+    // With a specific entity (the normal case now that the summary is one
+    // row per entity), only that entity's closure matters -- simple
+    // open/closed, no "-- Sole Prop only" hedging needed since the row
+    // itself is already scoped to one entity.
+    if (forEntity && forEntity !== "UNSPECIFIED") {
+      const closed = closedEntities.has(forEntity);
+      if (closed) return { label: "Filed", cls: "good" };
+      const now = new Date();
+      const curY = now.getFullYear();
+      const curQ = Math.ceil((now.getMonth() + 1) / 3);
+      if (y < curY || (y === curY && rowQ < curQ)) return { label: "Not marked as filed", cls: "bad" };
+      if (y === curY && rowQ === curQ) return { label: `Pending Q${curQ} ${curY} filing`, cls: "warn" };
+      return { label: "Not yet due", cls: "neutral" };
+    }
+    // No entity given (legacy/blended callers) -- old combined behavior.
     const spClosed = closedEntities.has("SOLE PROPRIETORSHIP");
     const corpClosed = closedEntities.has("CORPORATION");
     if (spClosed && corpClosed) return { label: "Filed", cls: "good" };
@@ -3740,9 +3755,11 @@
       $("reports-f-search").addEventListener("keydown", (e) => {
         if (e.key === "Enter") { e.preventDefault(); loadReports(); }
       });
+      $("reports-f-entity").addEventListener("change", loadReports);
       $("reports-f-clear").addEventListener("click", () => {
         $("reports-f-year").value = "";
         $("reports-f-quarter").value = "";
+        $("reports-f-entity").value = "";
         $("reports-f-search").value = "";
         loadReports();
       });
@@ -3762,18 +3779,27 @@
       sb.from("v_monthly_expenses").select("*"),
       sb.from("period_closures").select("business_entity,period_label"),
     ]);
+    // Keyed by month + entity together (not just month) -- v_monthly_summary
+    // and v_monthly_expenses are both now one row per entity per month (see
+    // 38_monthly_summary_per_entity.sql), so a Sole Prop sales row must only
+    // ever merge with a Sole Prop expenses row for that same month, never
+    // with Corporation's.
     const byMonth = {};
-    (sales || []).forEach((s) => (byMonth[s.month] = { ...byMonth[s.month], ...s }));
-    (exp || []).forEach((e) => (byMonth[e.month] = { ...byMonth[e.month], ...e }));
-    let rows = Object.keys(byMonth)
-      .sort((a, b) => b.localeCompare(a))
-      .map((m) => byMonth[m]);
+    const rowKey = (r) => `${r.month}|${r.business_entity || "UNSPECIFIED"}`;
+    (sales || []).forEach((s) => (byMonth[rowKey(s)] = { ...byMonth[rowKey(s)], ...s }));
+    (exp || []).forEach((e) => (byMonth[rowKey(e)] = { ...byMonth[rowKey(e)], ...e }));
+    let rows = Object.values(byMonth).sort((a, b) => {
+      const cmp = b.month.localeCompare(a.month);
+      return cmp !== 0 ? cmp : entityLabel(a.business_entity).localeCompare(entityLabel(b.business_entity));
+    });
 
     const summaryYear = $("reports-f-year").value.trim();
     const summaryQuarter = $("reports-f-quarter").value.trim();
+    const summaryEntity = $("reports-f-entity").value.trim();
     const summarySearch = $("reports-f-search").value.trim().toLowerCase();
     if (summaryYear) rows = rows.filter((r) => r.month.slice(0, 4) === summaryYear);
     if (summaryQuarter) rows = rows.filter((r) => Math.ceil(Number(r.month.slice(5, 7)) / 3) === Number(summaryQuarter));
+    if (summaryEntity) rows = rows.filter((r) => r.business_entity === summaryEntity);
     if (summarySearch) rows = rows.filter((r) => fmtMonth(r.month.slice(0, 7)).toLowerCase().includes(summarySearch) || r.month.includes(summarySearch));
     lastSummaryRows = rows;
     lastClosuresForReports = closures || [];
@@ -3782,9 +3808,11 @@
     tb.innerHTML = rows.length
       ? rows.map((r) => {
           const net = Number(r.net_sales || 0) - Number(r.total_expenses || 0);
-          const fs = quarterFilingStatus(r.month, closures);
+          const fs = quarterFilingStatus(r.month, closures, r.business_entity);
           return `<tr>
-            <td>${fmtMonth(r.month.slice(0, 7))}</td><td class="num">₱ ${fmtMoney(r.gross_sales)}</td>
+            <td>${fmtMonth(r.month.slice(0, 7))}</td>
+            <td>${r.business_entity === "UNSPECIFIED" ? '<span class="badge warn">No entity set</span>' : escapeHtml(entityLabel(r.business_entity))}</td>
+            <td class="num">₱ ${fmtMoney(r.gross_sales)}</td>
             <td class="num">₱ ${fmtMoney(r.net_sales)}</td><td class="num">₱ ${fmtMoney(r.vat_on_sales)}</td>
             <td class="num">₱ ${fmtMoney(r.withholding_tax_on_sales)}</td><td class="num">₱ ${fmtMoney(r.vat_expenses)}</td>
             <td class="num">₱ ${fmtMoney(r.non_vat_expenses)}</td><td class="num">₱ ${fmtMoney(r.total_expenses)}</td>
@@ -3793,23 +3821,34 @@
           </tr>`;
         }).join("") + (rows.length > 1
           ? (() => {
-              const sum = (key) => rows.reduce((a, r) => a + Number(r[key] || 0), 0);
-              const totalNet = sum("net_sales") - sum("total_expenses");
-              return `<tr style="font-weight:650;">
-                <td>TOTAL (${rows.length} month${rows.length === 1 ? "" : "s"})</td>
-                <td class="num">₱ ${fmtMoney(sum("gross_sales"))}</td>
-                <td class="num">₱ ${fmtMoney(sum("net_sales"))}</td>
-                <td class="num">₱ ${fmtMoney(sum("vat_on_sales"))}</td>
-                <td class="num">₱ ${fmtMoney(sum("withholding_tax_on_sales"))}</td>
-                <td class="num">₱ ${fmtMoney(sum("vat_expenses"))}</td>
-                <td class="num">₱ ${fmtMoney(sum("non_vat_expenses"))}</td>
-                <td class="num">₱ ${fmtMoney(sum("total_expenses"))}</td>
-                <td class="num">₱ ${fmtMoney(totalNet)}</td>
-                <td></td>
-              </tr>`;
+              // One subtotal row per entity present in what's currently shown,
+              // instead of one blended grand total -- summing a VAT-registered
+              // entity's VAT with a Non-VAT entity's ₱0 VAT into a single
+              // number was never something you could actually file, so a
+              // combined TOTAL row doesn't mean anything here either.
+              const entities = Array.from(new Set(rows.map((r) => r.business_entity)));
+              return entities.map((ent) => {
+                const entRows = rows.filter((r) => r.business_entity === ent);
+                const sum = (key) => entRows.reduce((a, r) => a + Number(r[key] || 0), 0);
+                const totalNet = sum("net_sales") - sum("total_expenses");
+                const label = ent === "UNSPECIFIED" ? "No entity set" : entityLabel(ent);
+                return `<tr style="font-weight:650;">
+                  <td>TOTAL — ${escapeHtml(label)}</td>
+                  <td>(${entRows.length} month${entRows.length === 1 ? "" : "s"})</td>
+                  <td class="num">₱ ${fmtMoney(sum("gross_sales"))}</td>
+                  <td class="num">₱ ${fmtMoney(sum("net_sales"))}</td>
+                  <td class="num">₱ ${fmtMoney(sum("vat_on_sales"))}</td>
+                  <td class="num">₱ ${fmtMoney(sum("withholding_tax_on_sales"))}</td>
+                  <td class="num">₱ ${fmtMoney(sum("vat_expenses"))}</td>
+                  <td class="num">₱ ${fmtMoney(sum("non_vat_expenses"))}</td>
+                  <td class="num">₱ ${fmtMoney(sum("total_expenses"))}</td>
+                  <td class="num">₱ ${fmtMoney(totalNet)}</td>
+                  <td></td>
+                </tr>`;
+              }).join("");
             })()
           : "")
-      : `<tr class="empty-row"><td colspan="10">Log some issued invoices and expenses to see the summary</td></tr>`;
+      : `<tr class="empty-row"><td colspan="11">Log some issued invoices and expenses to see the summary</td></tr>`;
     tb.querySelectorAll("[data-goto-filing]").forEach((btn) => btn.addEventListener("click", () => showView("audit")));
 
     let histQuery = sb.from("declarations_history").select("*").order("year", { ascending: false }).order("month", { ascending: false });
@@ -3832,10 +3871,12 @@
   $("reports-export").addEventListener("click", () => {
     if (!lastSummaryRows.length) return toast("Nothing to export yet", true);
     downloadCSV("monthly_vat_summary.csv", lastSummaryRows, [
-      { label: "Month", key: "month" }, { label: "Gross Sales", key: "gross_sales" }, { label: "Net Sales", key: "net_sales" },
+      { label: "Month", key: "month" },
+      { label: "Entity", get: (r) => r.business_entity === "UNSPECIFIED" ? "No entity set" : entityLabel(r.business_entity) },
+      { label: "Gross Sales", key: "gross_sales" }, { label: "Net Sales", key: "net_sales" },
       { label: "VAT on Sales", key: "vat_on_sales" }, { label: "WTax on Sales", key: "withholding_tax_on_sales" },
       { label: "VAT Expenses", key: "vat_expenses" }, { label: "Non-VAT Expenses", key: "non_vat_expenses" }, { label: "Total Expenses", key: "total_expenses" },
-      { label: "Filing Status", get: (r) => quarterFilingStatus(r.month, lastClosuresForReports).label },
+      { label: "Filing Status", get: (r) => quarterFilingStatus(r.month, lastClosuresForReports, r.business_entity).label },
     ]);
   });
 
