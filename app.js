@@ -363,7 +363,7 @@
     const today = todayISO();
     const monthStart = today.slice(0, 7) + "-01";
 
-    const [{ data: todaySales }, { data: monthSales }, { data: todayExp }, { data: monthExp }, { data: receivables }, { data: recentSales }] =
+    const [{ data: todaySales }, { data: monthSales }, { data: todayExp }, { data: monthExp }, { data: receivables }, { data: recentSales }, { data: todayCn }, { data: monthCn }] =
       await Promise.all([
         sb.from("sales").select("total_amount").eq("trx_date", today).is("deleted_at", null),
         sb.from("sales").select("total_amount").gte("trx_date", monthStart).is("deleted_at", null),
@@ -371,12 +371,18 @@
         sb.from("expenses").select("amount").gte("trx_date", monthStart).is("deleted_at", null),
         sb.from("sales").select("balance").neq("balance", 0).is("deleted_at", null),
         sb.from("v_sales_status").select("*").order("trx_date", { ascending: false }).limit(10),
+        // Credit notes reduce "sales" for whichever day/month they were
+        // ISSUED (cn_date), not the original invoice's date -- see
+        // 36_credit_notes_vat_netting.sql. A credit note never reaches back
+        // into an earlier, possibly already-closed period this way.
+        sb.from("credit_notes").select("amount").eq("cn_date", today).is("deleted_at", null),
+        sb.from("credit_notes").select("amount").gte("cn_date", monthStart).is("deleted_at", null),
       ]);
 
     const sum = (rows, key) => (rows || []).reduce((a, r) => a + Number(r[key] || 0), 0);
-    const todaySalesTotal = sum(todaySales, "total_amount");
+    const todaySalesTotal = sum(todaySales, "total_amount") - sum(todayCn, "amount");
     const todayExpTotal = sum(todayExp, "amount");
-    const monthSalesTotal = sum(monthSales, "total_amount");
+    const monthSalesTotal = sum(monthSales, "total_amount") - sum(monthCn, "amount");
     const monthExpTotal = sum(monthExp, "amount");
     const totalReceivable = sum(receivables, "balance");
 
@@ -2461,12 +2467,21 @@
       const amount = Number($("cn-amount").value || 0);
       if (!(amount > 0)) return toast("Enter a Credit Note amount greater than zero", true);
       const { data: { user } } = await sb.auth.getUser();
+      // Same net/VAT math as issued_invoices (computeNetVat, used by
+      // syncSalesReport()) applied to the Credit Note amount itself, using
+      // the linked sale's entity + exempt/zero-rated status -- this is what
+      // 36_credit_notes_vat_netting.sql's v_monthly_summary override reads
+      // to reduce VAT/net sales, so it has to be computed and saved here
+      // (once, at save time) rather than left for the view to guess at.
+      const { net, vat } = computeNetVat(amount, creditNoteSaleEntity, creditNoteSaleExempt);
       const { error } = await sb.from("credit_notes").insert({
         sale_id: saleId,
         business_entity: creditNoteSaleEntity,
         cn_date: $("cn-date").value,
         cn_number: $("cn-number").value.trim() || null,
         amount,
+        net_amount: net,
+        vat_amount: vat,
         reason: $("cn-reason").value.trim(),
         created_by: user?.email || null,
       });
@@ -2477,9 +2492,11 @@
     });
   }
   let creditNoteSaleEntity = ""; // stashed from the sale row the modal was opened for -- credit_notes.business_entity is denormalized the same way staff_commissions.business_entity is
+  let creditNoteSaleExempt = false; // r.zero_rated || r.vat_exempt from that same sale -- feeds computeNetVat() the same way it would for the original sale
   function openCreditNoteModal(r) {
     if (!r) return;
     creditNoteSaleEntity = r.business_entity || "";
+    creditNoteSaleExempt = !!(r.zero_rated || r.vat_exempt);
     $("cn-sale-id").value = r.id;
     $("cn-sale-recap").textContent = `${r.invoice_no ? r.invoice_no + " — " : ""}${r.tradename || ""} — Total ₱ ${fmtMoney(r.total_amount)}, dated ${fmtDate(r.trx_date)}`;
     $("cn-date").value = todayISO();
@@ -3854,20 +3871,29 @@
     // matches what Expenses Report shows for the same period/entity.
     let expQuery = sb.from("expenses").select("amount,category,business_entity").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null).in("tax_type", ["VAT", "NVAT"]);
     if (entity) expQuery = expQuery.eq("business_entity", entity);
-    const [{ data: inv, error: iErr }, { data: exp, error: eErr }] = await Promise.all([
+    // Credit notes reduce revenue for whichever period they were ISSUED in
+    // (cn_date), same as v_monthly_summary -- see
+    // 36_credit_notes_vat_netting.sql. Filtered by cn_date (not the linked
+    // sale's month_declared) so this always matches the Reports tab, which
+    // reads the same view.
+    let cnQuery = sb.from("credit_notes").select("amount,net_amount,vat_amount,business_entity").gte("cn_date", from).lte("cn_date", to).is("deleted_at", null);
+    if (entity) cnQuery = cnQuery.eq("business_entity", entity);
+    const [{ data: inv, error: iErr }, { data: exp, error: eErr }, { data: cn, error: cErr }] = await Promise.all([
       invQuery,
       expQuery,
+      cnQuery,
     ]);
     if (iErr) return toast(iErr.message, true);
     if (eErr) return toast(eErr.message, true);
+    if (cErr) return toast(cErr.message, true);
 
     const activeInv = (inv || []).filter((r) => !r.cancelled);
-    const grossSales = activeInv.reduce((a, r) => a + Number(r.gross_sales || 0), 0);
-    const vatOnSales = activeInv.reduce((a, r) => a + Number(r.vat || 0), 0);
+    const grossSales = activeInv.reduce((a, r) => a + Number(r.gross_sales || 0), 0) - (cn || []).reduce((a, r) => a + Number(r.amount || 0), 0);
+    const vatOnSales = activeInv.reduce((a, r) => a + Number(r.vat || 0), 0) - (cn || []).reduce((a, r) => a + Number(r.vat_amount || 0), 0);
     const netSales = activeInv.reduce((a, r) => {
       const rowNet = r.net_sales != null ? Number(r.net_sales) : Number(r.gross_sales || 0) - Number(r.vat || 0);
       return a + rowNet;
-    }, 0);
+    }, 0) - (cn || []).reduce((a, r) => a + Number(r.net_amount != null ? r.net_amount : r.amount || 0), 0);
     const totalExpenses = (exp || []).reduce((a, r) => a + Number(r.amount || 0), 0);
     const netIncome = netSales - totalExpenses;
 
