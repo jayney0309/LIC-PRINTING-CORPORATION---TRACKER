@@ -369,7 +369,7 @@
         sb.from("sales").select("total_amount").gte("trx_date", monthStart).is("deleted_at", null),
         sb.from("expenses").select("amount").eq("trx_date", today).is("deleted_at", null),
         sb.from("expenses").select("amount").gte("trx_date", monthStart).is("deleted_at", null),
-        sb.from("sales").select("balance").neq("balance", 0).is("deleted_at", null),
+        sb.from("v_sales_status").select("effective_balance").neq("effective_balance", 0).is("deleted_at", null),
         sb.from("v_sales_status").select("*").order("trx_date", { ascending: false }).limit(10),
         // Credit notes reduce "sales" for whichever day/month they were
         // ISSUED (cn_date), not the original invoice's date -- see
@@ -384,7 +384,7 @@
     const todayExpTotal = sum(todayExp, "amount");
     const monthSalesTotal = sum(monthSales, "total_amount") - sum(monthCn, "amount");
     const monthExpTotal = sum(monthExp, "amount");
-    const totalReceivable = sum(receivables, "balance");
+    const totalReceivable = sum(receivables, "effective_balance");
 
     $("dash-cards").innerHTML = [
       card("Today's sales", fmtMoney(todaySalesTotal), "good"),
@@ -402,7 +402,7 @@
     tb.innerHTML = (recentSales || []).length
       ? recentSales.map((r) => `<tr>
           <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.tradename)}</td><td>${escapeHtml(r.reference_person || "")}</td>
-          <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.balance)}</td><td>${statusBadge(r.status)}</td>
+          <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.effective_balance)}</td><td>${statusBadge(r.status)}</td>
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="6">No sales logged yet</td></tr>`;
 
@@ -627,7 +627,7 @@
       downloadCSV(currentSalesEntity === "CORPORATION" ? "sales_corporation.csv" : "sales_sole_prop.csv", rows, [
         { label: "Date", key: "trx_date" }, { label: "Tradename", key: "tradename" },
         { label: "Employee", key: "reference_person" }, { label: "Total", key: "total_amount" },
-        { label: "Received", key: "amount_received" }, { label: "Balance", key: "balance" },
+        { label: "Received", key: "amount_received" }, { label: "Balance", key: "effective_balance" },
         { label: "Status", key: "status" }, { label: "Mode", key: "mode_of_payment" },
         { label: "Xero Invoice No", key: "invoice_no" }, { label: "Business Entity", key: "business_entity" },
         { label: "TIN", key: "tin" }, { label: "ATC", key: "atc" }, { label: "Tax Withheld", key: "tax_withheld" },
@@ -758,7 +758,7 @@
       ? rows.map((r) => `<tr>
           <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.tradename)}</td><td>${escapeHtml(r.reference_person || "")}</td>
           <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.amount_received)}</td>
-          <td class="num">₱ ${fmtMoney(r.balance)}</td><td>${statusBadge(r.status)}</td>
+          <td class="num">₱ ${fmtMoney(r.effective_balance)}</td><td>${statusBadge(r.status)}</td>
           <td>${escapeHtml(r.mode_of_payment || "")}</td><td>${escapeHtml(r.invoice_no || "")}${r.linked_payment_label ? `<br><span class="hint">${escapeHtml(r.linked_payment_label)}</span>` : ""}</td>
           <td>${has2307.has(r.id) ? '<span class="badge good">2307</span>' : ""}</td>
           <td>${hasInvoice.has(r.id) ? '<span class="badge good">Filed</span>' : ""}</td>
@@ -1696,7 +1696,7 @@
     const search = $("receivables-f-search").value.trim();
     const entity = $("receivables-f-entity").value;
     const buildQ = (from_, to_) => {
-      let q = sb.from("v_sales_status").select("*").neq("balance", 0).order("trx_date", { ascending: true });
+      let q = sb.from("v_sales_status").select("*").neq("effective_balance", 0).order("trx_date", { ascending: true });
       if (search) q = q.ilike("tradename", `%${search}%`);
       if (entity) q = q.eq("business_entity", entity);
       return q.range(from_, to_);
@@ -1704,7 +1704,7 @@
     const { data, error } = await fetchAllPages(buildQ);
     if (error) return toast(error.message, true);
     const rows = data || [];
-    const total = rows.reduce((a, r) => a + Number(r.balance || 0), 0);
+    const total = rows.reduce((a, r) => a + Number(r.effective_balance || 0), 0);
     const oldest = rows[0];
     $("receivables-cards").innerHTML = `
       <div class="stat-card"><div class="label">Total outstanding</div><div class="value warn">₱ ${fmtMoney(total)}</div></div>
@@ -1716,8 +1716,8 @@
       ? rows.map((r) => `<tr>
           <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.tradename)}</td><td>${escapeHtml(r.reference_person || "")}</td>
           <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.amount_received)}</td>
-          <td class="num">₱ ${fmtMoney(r.balance)}</td><td>${r.age_days} day${r.age_days === 1 ? "" : "s"}</td>
-          <td class="row-actions"><button class="btn small accent" data-pay="${r.id}" data-bal="${r.balance}">Record payment</button></td>
+          <td class="num">₱ ${fmtMoney(r.effective_balance)}</td><td>${r.age_days} day${r.age_days === 1 ? "" : "s"}</td>
+          <td class="row-actions"><button class="btn small accent" data-pay="${r.id}" data-bal="${r.effective_balance}">Record payment</button></td>
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="8">Nothing outstanding — everything's paid up 🎉</td></tr>`;
     tb.querySelectorAll("[data-pay]").forEach((btn) =>
@@ -2031,7 +2031,7 @@
           <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.tradename)}</td><td>${escapeHtml(r.reference_person || "")}</td>
           <td>${escapeHtml(entityLabel(r.business_entity))}</td>
           <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.amount_received)}</td>
-          <td class="num">₱ ${fmtMoney(r.balance)}</td><td>${statusBadge(r.status)}</td>
+          <td class="num">₱ ${fmtMoney(r.effective_balance)}</td><td>${statusBadge(r.status)}</td>
           <td>${escapeHtml(r.invoice_no || "")}${r.linked_payment_label ? `<br><span class="hint">${escapeHtml(r.linked_payment_label)}</span>` : ""}</td><td>${escapeHtml(r.bir_receipt_no || "")}</td>
           <td class="row-actions">
             <button type="button" class="btn small" data-ss-edit="${r.id}">Edit</button>
