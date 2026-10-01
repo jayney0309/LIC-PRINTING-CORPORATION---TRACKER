@@ -35,6 +35,31 @@
     const v = Number(n || 0);
     return v.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
+  // Strips thousand-separator commas back out so a comma-formatted amount
+  // field (see liveFormatMoneyInput) can still be read as a plain number.
+  function parseMoneyInput(str) {
+    const cleaned = String(str || "").replace(/,/g, "").trim();
+    return cleaned === "" ? NaN : Number(cleaned);
+  }
+  // Auto-inserts thousand-separator commas into a text input as the user
+  // types a peso amount (e.g. "1800" -> "1,800"), keeping the cursor in
+  // place relative to the end of the value so typing in the middle of a
+  // number doesn't jump the caret around.
+  function liveFormatMoneyInput(el) {
+    const raw = el.value;
+    const cursorFromEnd = raw.length - (el.selectionStart ?? raw.length);
+    let cleaned = raw.replace(/[^\d.]/g, "");
+    const firstDot = cleaned.indexOf(".");
+    if (firstDot !== -1) cleaned = cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, "");
+    let [intPart, decPart] = cleaned.split(".");
+    intPart = (intPart || "").replace(/^0+(?=\d)/, "");
+    const formattedInt = intPart ? intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",") : "";
+    let formatted = formattedInt;
+    if (decPart !== undefined) formatted += "." + decPart.slice(0, 2);
+    el.value = formatted;
+    const newPos = Math.max(0, formatted.length - cursorFromEnd);
+    el.setSelectionRange(newPos, newPos);
+  }
   function fmtDate(d) {
     if (!d) return "";
     const dt = typeof d === "string" ? new Date(d + (d.length === 7 ? "-01" : "T00:00:00")) : d;
@@ -3163,7 +3188,7 @@
           <td>${escapeHtml(c.staff_name)}</td>
           <td class="num">₱ ${fmtMoney(c.sale_total)}</td><td class="num">₱ ${fmtMoney(c.sales?.amount_received)}</td>
           <td class="num">${currentRole === "admin"
-            ? `<input type="number" step="0.01" min="0" data-comm-amount-input="${c.id}" data-comm-sale-total="${c.sale_total}" value="${Number(c.commission_amount || 0)}" style="width:88px; text-align:right;" title="Auto-computed at ${(Number(c.commission_rate || 0.10) * 100).toFixed(2)}% of the sale total -- edit if the actual agreed commission is different" />`
+            ? `<input type="text" inputmode="decimal" data-comm-amount-input="${c.id}" data-comm-sale-total="${c.sale_total}" value="${fmtMoney(c.commission_amount)}" style="width:100px; text-align:right;" title="Auto-computed at ${(Number(c.commission_rate || 0.10) * 100).toFixed(2)}% of the sale total -- edit if the actual agreed commission is different" />`
             : `₱ ${fmtMoney(c.commission_amount)}`}</td>
           <td>${c.status === "approved" ? '<span class="badge good">Approved</span>' : '<span class="badge warn">Pending</span>'}${c.needs_review ? ' <span class="badge warn">changed since approval</span>' : ""}</td>
           <td>${c.paid_at ? '<span class="badge good">Paid</span>' : '<span class="badge neutral">Not yet paid</span>'}</td>
@@ -3187,11 +3212,12 @@
     // sale row is updated for any reason -- without also updating the
     // rate, an unrelated future edit to that sale would silently overwrite
     // this correction back to a flat 10%.
-    tb.querySelectorAll("[data-comm-amount-input]").forEach((input) =>
+    tb.querySelectorAll("[data-comm-amount-input]").forEach((input) => {
+      input.addEventListener("input", () => liveFormatMoneyInput(input));
       input.addEventListener("change", async () => {
         const id = input.dataset.commAmountInput;
         const saleTotal = Number(input.dataset.commSaleTotal || 0);
-        const newAmount = Number(input.value);
+        const newAmount = parseMoneyInput(input.value);
         if (!Number.isFinite(newAmount) || newAmount < 0) {
           toast("Enter a valid, non-negative commission amount", true);
           loadCommissions();
@@ -3203,8 +3229,8 @@
         if (err2) { toast(err2.message, true); loadCommissions(); return; }
         toast("Commission amount updated");
         loadCommissions();
-      })
-    );
+      });
+    });
     tb.querySelectorAll("[data-approve-comm]").forEach((btn) =>
       btn.addEventListener("click", async () => {
         const { data: { user } } = await sb.auth.getUser();
