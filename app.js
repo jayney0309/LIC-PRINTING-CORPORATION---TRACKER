@@ -2716,7 +2716,7 @@
     const to = $("opsreport-to").value;
     const entity = $("opsreport-entity").value;
 
-    let salesQuery = sb.from("sales").select("id,trx_date,tradename,total_amount,amount_received,balance,mode_of_payment,reference_person,business_entity,is_walkin,invoice_no,bir_receipt_no").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null);
+    let salesQuery = sb.from("v_sales_status").select("id,trx_date,tradename,total_amount,amount_received,balance,effective_balance,mode_of_payment,reference_person,business_entity,is_walkin,invoice_no,bir_receipt_no").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null);
     if (entity) salesQuery = salesQuery.eq("business_entity", entity);
     let expQuery = sb.from("expenses").select("trx_date,amount,mode_of_payment,category,business_name,business_entity").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null);
     if (entity) expQuery = expQuery.eq("business_entity", entity);
@@ -2849,13 +2849,23 @@
     // ---- staff performance (item 11: walk-in sales labeled as such, not
     // just "(unassigned)") ----
     const staff = {};
+    const staffSeenInvoices = {}; // per staff member: invoice nos already counted into .balance
     (sales || []).forEach((r) => {
       const name = r.reference_person || (r.is_walkin ? "Walk-in" : "(unassigned)");
       staff[name] = staff[name] || { count: 0, total: 0, received: 0, balance: 0 };
+      staffSeenInvoices[name] = staffSeenInvoices[name] || new Set();
       staff[name].count += 1;
       staff[name].total += Number(r.total_amount || 0);
       staff[name].received += Number(r.amount_received || 0);
-      staff[name].balance += Number(r.balance || 0);
+      // effective_balance is the whole linked group's remaining balance --
+      // identical on every installment row of the same invoice -- so if this
+      // staff member has more than one row for the same invoice in this
+      // period, only count it toward Outstanding once, not once per row.
+      const invKey = (r.invoice_no || "").trim();
+      if (!invKey || !staffSeenInvoices[name].has(invKey)) {
+        staff[name].balance += Number(r.effective_balance != null ? r.effective_balance : r.balance || 0);
+        if (invKey) staffSeenInvoices[name].add(invKey);
+      }
     });
     const staffNames = Object.keys(staff).sort((a, b) => staff[b].total - staff[a].total);
     const stb = $("opsreport-staff-table").querySelector("tbody");
@@ -2891,7 +2901,9 @@
         const g = byInvoice[key];
         g.total_amount = Number(g.total_amount || 0) + Number(r.total_amount || 0);
         g.amount_received = Number(g.amount_received || 0) + Number(r.amount_received || 0);
-        g.balance = Number(g.balance || 0) + Number(r.balance || 0);
+        // effective_balance is already the group-wide remaining balance (the
+        // same figure on every row of this invoice) -- take it once from the
+        // first row seen (set via the spread below), never sum it again here.
         g.modes.add(r.mode_of_payment || "(not specified)");
         if (r.bir_receipt_no) g.bir_receipt_no = g.bir_receipt_no || r.bir_receipt_no;
       }
@@ -2906,7 +2918,7 @@
           <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.tradename || "")}</td>
           <td>${escapeHtml(r.reference_person || (r.is_walkin ? "Walk-in" : ""))}</td><td>${escapeHtml(r.invoice_no || "")}</td>
           <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.amount_received)}</td>
-          <td class="num">₱ ${fmtMoney(r.balance)}</td><td>${escapeHtml(r.modeLabel)}</td>
+          <td class="num">₱ ${fmtMoney(r.effective_balance != null ? r.effective_balance : r.balance)}</td><td>${escapeHtml(r.modeLabel)}</td>
           <td>${(r.bir_receipt_no || "").trim() ? statusBadge("FULLY PAID") : statusBadge("N/A")}</td>
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="9">No sales in this period</td></tr>`;
