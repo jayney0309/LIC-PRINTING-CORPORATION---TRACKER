@@ -395,7 +395,10 @@
         sb.from("expenses").select("amount").eq("trx_date", today).is("deleted_at", null),
         sb.from("expenses").select("amount").gte("trx_date", monthStart).is("deleted_at", null),
         sb.from("v_sales_status").select("effective_balance").neq("effective_balance", 0).is("deleted_at", null),
-        sb.from("v_sales_status").select("*").order("trx_date", { ascending: false }).limit(10),
+        // Was missing .is("deleted_at", null) -- same bug as Daily Sales/
+        // Receivables/the Commission Reconcile tool: a trashed sale could
+        // still show up in the Dashboard's recent sales list as if live.
+        sb.from("v_sales_status").select("*").is("deleted_at", null).order("trx_date", { ascending: false }).limit(10),
         // Credit notes reduce "sales" for whichever day/month they were
         // ISSUED (cn_date), not the original invoice's date -- see
         // 36_credit_notes_vat_netting.sql. A credit note never reaches back
@@ -753,7 +756,13 @@
     // silently drop the rest.
     const from = $("sales-f-from").value, to = $("sales-f-to").value, status = $("sales-f-status").value, search = $("sales-f-search").value.trim();
     const buildQ = (from_, to_) => {
-      let q = sb.from("v_sales_status").select("*").eq("business_entity", currentSalesEntity).order("trx_date", { ascending: false });
+      // Was missing .is("deleted_at", null) -- the exact same bug already
+      // found and fixed in Sales Search (see the comment on its own
+      // buildQ): a row already moved to Trash still showed up here as if
+      // it were live, with nothing marking it as gone, so the same Xero
+      // invoice could show 2 rows in Daily Sales while Sales Search (and
+      // every other view) correctly showed only 1.
+      let q = sb.from("v_sales_status").select("*").eq("business_entity", currentSalesEntity).is("deleted_at", null).order("trx_date", { ascending: false });
       if (from) q = q.gte("trx_date", from);
       if (to) q = q.lte("trx_date", to);
       if (status) q = q.eq("status", status);
@@ -1721,7 +1730,11 @@
     const search = $("receivables-f-search").value.trim();
     const entity = $("receivables-f-entity").value;
     const buildQ = (from_, to_) => {
-      let q = sb.from("v_sales_status").select("*").neq("effective_balance", 0).order("trx_date", { ascending: true });
+      // Was missing .is("deleted_at", null) -- a trashed sale with a
+      // leftover nonzero balance could still show up here as an open
+      // receivable. Same bug as Daily Sales/Dashboard recent sales/the
+      // Commission Reconcile tool.
+      let q = sb.from("v_sales_status").select("*").neq("effective_balance", 0).is("deleted_at", null).order("trx_date", { ascending: true });
       if (search) q = q.ilike("tradename", `%${search}%`);
       if (entity) q = q.eq("business_entity", entity);
       return q.range(from_, to_);
@@ -3350,9 +3363,14 @@
     // history can pass 1000 rows, and this reconciliation exists
     // specifically to catch mismatches, so it can't silently stop early.
     const buildQ = (from_, to_) => {
+      // Was missing .is("deleted_at", null) -- a trashed sale could show
+      // up here as "no commission record" even though it was correctly
+      // never commissioned (it was deleted). Same bug as Daily Sales/
+      // Dashboard recent sales/Receivables.
       let q = sb.from("v_sales_status").select("*")
         .ilike("reference_person", employee)
         .eq("is_walkin", false)
+        .is("deleted_at", null)
         .order("trx_date", { ascending: false });
       if (from) q = q.gte("trx_date", from);
       if (to) q = q.lte("trx_date", to);
