@@ -427,7 +427,7 @@
     tb.innerHTML = (recentSales || []).length
       ? recentSales.map((r) => `<tr>
           <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.tradename)}</td><td>${escapeHtml(r.reference_person || "")}</td>
-          <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.effective_balance)}</td><td>${statusBadge(r.status)}</td>
+          <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.running_balance)}</td><td>${statusBadge(r.running_status)}</td>
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="6">No sales logged yet</td></tr>`;
 
@@ -652,8 +652,8 @@
       downloadCSV(currentSalesEntity === "CORPORATION" ? "sales_corporation.csv" : "sales_sole_prop.csv", rows, [
         { label: "Date", key: "trx_date" }, { label: "Tradename", key: "tradename" },
         { label: "Employee", key: "reference_person" }, { label: "Total", key: "total_amount" },
-        { label: "Received", key: "amount_received" }, { label: "Balance", key: "effective_balance" },
-        { label: "Status", key: "status" }, { label: "Mode", key: "mode_of_payment" },
+        { label: "Received", key: "amount_received" }, { label: "Balance", key: "running_balance" },
+        { label: "Status", key: "running_status" }, { label: "Mode", key: "mode_of_payment" },
         { label: "Xero Invoice No", key: "invoice_no" }, { label: "Business Entity", key: "business_entity" },
         { label: "TIN", key: "tin" }, { label: "ATC", key: "atc" }, { label: "Tax Withheld", key: "tax_withheld" },
         { label: "Payment Confirmed", get: (r) => (r.payment_confirmed ? "Yes" : "No") },
@@ -783,7 +783,7 @@
       ? rows.map((r) => `<tr>
           <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.tradename)}</td><td>${escapeHtml(r.reference_person || "")}</td>
           <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.amount_received)}</td>
-          <td class="num">₱ ${fmtMoney(r.effective_balance)}</td><td>${statusBadge(r.status)}</td>
+          <td class="num">₱ ${fmtMoney(r.running_balance)}</td><td>${statusBadge(r.running_status)}</td>
           <td>${escapeHtml(r.mode_of_payment || "")}</td><td>${escapeHtml(r.invoice_no || "")}${r.linked_payment_label ? `<br><span class="hint">${escapeHtml(r.linked_payment_label)}</span>` : ""}</td>
           <td>${has2307.has(r.id) ? '<span class="badge good">2307</span>' : ""}</td>
           <td>${hasInvoice.has(r.id) ? '<span class="badge good">Filed</span>' : ""}</td>
@@ -2056,7 +2056,7 @@
           <td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.tradename)}</td><td>${escapeHtml(r.reference_person || "")}</td>
           <td>${escapeHtml(entityLabel(r.business_entity))}</td>
           <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.amount_received)}</td>
-          <td class="num">₱ ${fmtMoney(r.effective_balance)}</td><td>${statusBadge(r.status)}</td>
+          <td class="num">₱ ${fmtMoney(r.running_balance)}</td><td>${statusBadge(r.running_status)}</td>
           <td>${escapeHtml(r.invoice_no || "")}${r.linked_payment_label ? `<br><span class="hint">${escapeHtml(r.linked_payment_label)}</span>` : ""}</td><td>${escapeHtml(r.bir_receipt_no || "")}</td>
           <td class="row-actions">
             <button type="button" class="btn small" data-ss-edit="${r.id}">Edit</button>
