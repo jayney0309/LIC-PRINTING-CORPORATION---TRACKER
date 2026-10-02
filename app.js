@@ -3159,26 +3159,6 @@
       if (!arrow) return;
       arrow.textContent = commissionSort && commissionSort.key === key ? (commissionSort.dir === "asc" ? " ▲" : " ▼") : "";
     });
-    // Totals reflect whatever's currently loaded (i.e. every filter above,
-    // including the Employee dropdown) -- so picking one employee shows
-    // just their total, and leaving it on "All" shows a per-employee
-    // breakdown of everything currently on screen.
-    const totalsByEmployee = {};
-    rows.forEach((c) => {
-      const key = c.staff_name || "(no name)";
-      totalsByEmployee[key] = totalsByEmployee[key] || { total: 0, count: 0 };
-      totalsByEmployee[key].total += Number(c.commission_amount || 0);
-      totalsByEmployee[key].count += 1;
-    });
-    const grandTotal = rows.reduce((sum, c) => sum + Number(c.commission_amount || 0), 0);
-    const totalsEl = $("commission-totals");
-    if (totalsEl) {
-      const perEmployee = Object.entries(totalsByEmployee).sort((a, b) => b[1].total - a[1].total);
-      totalsEl.innerHTML = rows.length
-        ? `<strong>Total shown: ₱ ${fmtMoney(grandTotal)}</strong> (${rows.length} commission${rows.length === 1 ? "" : "s"})` +
-          (perEmployee.length > 1 ? " — " + perEmployee.map(([name, v]) => `${escapeHtml(name)}: ₱ ${fmtMoney(v.total)} (${v.count})`).join(", ") : "")
-        : "";
-    }
     const tb = $("commission-table").querySelector("tbody");
     tb.innerHTML = rows.length
       ? rows.map((c) => `<tr>
@@ -3272,6 +3252,37 @@
     const n = document.querySelectorAll("#commission-table [data-comm-select]:checked").length;
     $("commission-bulk-bar").style.display = n ? "" : "none";
     $("commission-bulk-count").textContent = `${n} selected`;
+    renderCommissionTotals();
+  }
+  // Totals reflect whatever's currently loaded (i.e. every filter above,
+  // including the Employee dropdown) -- so picking one employee shows just
+  // their total, and leaving it on "All" shows a per-employee breakdown of
+  // everything currently on screen. BUT if one or more rows are checked
+  // (the bulk-action checkboxes), the total narrows down to just the
+  // selected rows instead -- Jamie wants to tick a handful of commissions
+  // and immediately see what just those add up to, without it being
+  // drowned out by the full filtered total.
+  function renderCommissionTotals() {
+    const totalsEl = $("commission-totals");
+    if (!totalsEl) return;
+    const checkedIds = new Set(
+      Array.from(document.querySelectorAll("#commission-table [data-comm-select]:checked")).map((cb) => cb.dataset.commSelect)
+    );
+    const scopeRows = checkedIds.size ? lastCommissionRows.filter((c) => checkedIds.has(String(c.id))) : lastCommissionRows;
+    const totalsByEmployee = {};
+    scopeRows.forEach((c) => {
+      const key = c.staff_name || "(no name)";
+      totalsByEmployee[key] = totalsByEmployee[key] || { total: 0, count: 0 };
+      totalsByEmployee[key].total += Number(c.commission_amount || 0);
+      totalsByEmployee[key].count += 1;
+    });
+    const grandTotal = scopeRows.reduce((sum, c) => sum + Number(c.commission_amount || 0), 0);
+    const perEmployee = Object.entries(totalsByEmployee).sort((a, b) => b[1].total - a[1].total);
+    const label = checkedIds.size ? "Total selected" : "Total shown";
+    totalsEl.innerHTML = scopeRows.length
+      ? `<strong>${label}: ₱ ${fmtMoney(grandTotal)}</strong> (${scopeRows.length} commission${scopeRows.length === 1 ? "" : "s"})` +
+        (perEmployee.length > 1 ? " — " + perEmployee.map(([name, v]) => `${escapeHtml(name)}: ₱ ${fmtMoney(v.total)} (${v.count})`).join(", ") : "")
+      : "";
   }
   // Bulk-clears a backlog of old commission claims (e.g. everything from
   // before this system existed, already actually paid out in real life)
