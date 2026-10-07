@@ -1,5 +1,5 @@
 /* =====================================================================
-   LIC Printing Shop — Bookkeeping & Tax System
+   LIC Printing Shop — Financial System
    Plain JS + Supabase. No build step — open index.html or host as-is.
    ===================================================================== */
 
@@ -19,7 +19,7 @@
   }
   document.getElementById("config-banner").style.display = configOk ? "none" : "block";
   document.getElementById("brand-name").textContent = CONFIG.COMPANY_NAME || "LIC Printing Shop";
-  document.getElementById("brand-sub").textContent = "Books & Tax System";
+  document.getElementById("brand-sub").textContent = "Financial System";
   document.getElementById("login-brand-name").textContent = CONFIG.COMPANY_NAME || "LIC Printing Shop";
 
   document.getElementById("today-label").textContent = new Date().toLocaleDateString("en-PH", {
@@ -1165,7 +1165,7 @@
 
     doc.setFontSize(7.5);
     doc.setTextColor(140);
-    doc.text("Generated from " + payorName + "'s Bookkeeping & Tax System — please review all details before signing and filing.", marginX, 287);
+    doc.text("Generated from " + payorName + "'s Financial System — please review all details before signing and filing.", marginX, 287);
 
     const safeName = (payeeName || "payee").replace(/[^a-z0-9]+/gi, "_").slice(0, 40);
     doc.save(`2307_${safeName}_${monthStr}.pdf`);
