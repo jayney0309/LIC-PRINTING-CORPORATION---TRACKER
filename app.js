@@ -1934,9 +1934,30 @@
     if (error) { toast(error.message, true); return []; }
     return data || [];
   }
+  // Totals strip above the Sales Report table -- covers every row matching
+  // the current Month / Search / Entity filters (not just what's scrolled
+  // into view). Cancelled invoices are left out of the sums. With the entity
+  // filter on "All" it also breaks the totals down per entity, since Sole
+  // Prop (VAT) and Corp (non-VAT) shouldn't be read as one number.
+  function renderInvoicesTotals(rows) {
+    const el = $("invoices-totals");
+    if (!el) return;
+    const live = rows.filter((r) => !r.cancelled);
+    if (!live.length) { el.innerHTML = ""; return; }
+    const sum = (arr, k) => arr.reduce((t, r) => t + Number(r[k] || 0), 0);
+    const line = (label, arr) =>
+      `<div><strong>${label}</strong> (${arr.length} invoice${arr.length === 1 ? "" : "s"}) &nbsp;Gross ₱ ${fmtMoney(sum(arr, "gross_sales"))} &nbsp;·&nbsp; Net ₱ ${fmtMoney(sum(arr, "net_sales"))} &nbsp;·&nbsp; VAT ₱ ${fmtMoney(sum(arr, "vat"))} &nbsp;·&nbsp; WTax ₱ ${fmtMoney(sum(arr, "withholding_tax"))}</div>`;
+    const entities = Array.from(new Set(live.map((r) => r.business_entity || ""))).filter((e) => e !== "");
+    let html = line("Total", live);
+    if (entities.length > 1) {
+      html += entities.map((e) => line("&nbsp;&nbsp;" + escapeHtml(entityLabel(e)), live.filter((r) => r.business_entity === e))).join("");
+    }
+    el.innerHTML = html;
+  }
   async function loadInvoices() {
     if (!requireDb()) return;
     const rows = await fetchInvoicesRows();
+    renderInvoicesTotals(rows);
     const tb = $("invoices-table").querySelector("tbody");
     tb.innerHTML = rows.length
       ? rows.map((r) => `<tr>
