@@ -787,7 +787,7 @@
         <div id="invoices-totals" style="margin:4px 0 10px;font-size:14px;line-height:1.7;"></div>
         <div class="table-wrap"><table class="data" id="invoices-table">
           <thead><tr>
-            <th>Month</th><th>Date</th><th>BIR Receipt No.</th><th>Customer</th><th>Entity</th><th class="num">Gross</th>
+            <th>Month</th><th><button type="button" class="btn ghost small" data-sort-inv="invoice_date" style="padding:2px 4px;">Date<span class="sort-arrow"></span></button></th><th><button type="button" class="btn ghost small" data-sort-inv="invoice_no" style="padding:2px 4px;">BIR Receipt No.<span class="sort-arrow"></span></button></th><th>Customer</th><th>Entity</th><th class="num">Gross</th>
             <th class="num">Net</th><th class="num">VAT</th><th class="num">WTax</th><th>2307</th><th>Actions</th>
           </tr></thead>
           <tbody></tbody>
@@ -1308,6 +1308,6 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="config.js" onerror="console.warn('config.js not found — copy config.example.js to config.js')"></script>
-<script src="app.js?v=20261022c"></script>
+<script src="app.js?v=20261022d"></script>
 </body>
 </html>

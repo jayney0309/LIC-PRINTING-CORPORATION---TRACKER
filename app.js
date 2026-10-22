@@ -1861,7 +1861,35 @@
   // register is now fed only by the auto-sync from Daily Sales (a row
   // appears exactly when a BIR receipt no. is entered there), plus the
   // pre-existing historical rows carried over from the Declarations sheet.
+  let lastInvoicesRows = [];
+  // { key: "invoice_date" | "invoice_no", dir: "asc" | "desc" } -- set by
+  // clicking the Date / BIR Receipt No. column headers; null = default order.
+  let invoicesSort = null;
+  // Default order: newest month first (as before), then within a month by
+  // date and then by BIR receipt no. -- both ascending, numeric-aware so
+  // "0009" sorts before "0020" and 2871 before 3063. Used for the table and
+  // the CSV / SLS exports alike.
+  function sortInvoiceRows(rows, sortState) {
+    const num = (a, b) => String(a || "").localeCompare(String(b || ""), undefined, { numeric: true });
+    const out = rows.slice();
+    if (sortState) {
+      const sign = sortState.dir === "desc" ? -1 : 1;
+      out.sort((a, b) => sign * num(a[sortState.key], b[sortState.key]) || num(a.invoice_date, b.invoice_date) || num(a.invoice_no, b.invoice_no));
+    } else {
+      out.sort((a, b) => num(b.month_declared, a.month_declared) || num(a.invoice_date, b.invoice_date) || num(a.invoice_no, b.invoice_no));
+    }
+    return out;
+  }
   function initInvoicesForm() {
+    document.querySelectorAll("#invoices-table [data-sort-inv]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const key = btn.dataset.sortInv;
+        invoicesSort = invoicesSort && invoicesSort.key === key
+          ? { key, dir: invoicesSort.dir === "asc" ? "desc" : "asc" }
+          : { key, dir: "asc" };
+        renderInvoicesRows();
+      })
+    );
     $("invoices-f-apply").addEventListener("click", loadInvoices);
     $("invoices-f-search").addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); loadInvoices(); }
@@ -1932,7 +1960,7 @@
     };
     const { data, error } = await fetchAllPages(buildQ);
     if (error) { toast(error.message, true); return []; }
-    return data || [];
+    return sortInvoiceRows(data || [], null);
   }
   // Totals strip above the Sales Report table -- covers every row matching
   // the current Month / Search / Entity filters (not just what's scrolled
@@ -1956,8 +1984,16 @@
   }
   async function loadInvoices() {
     if (!requireDb()) return;
-    const rows = await fetchInvoicesRows();
+    lastInvoicesRows = await fetchInvoicesRows();
+    renderInvoicesRows();
+  }
+  function renderInvoicesRows() {
+    const rows = sortInvoiceRows(lastInvoicesRows, invoicesSort);
     renderInvoicesTotals(rows);
+    document.querySelectorAll("#invoices-table [data-sort-inv]").forEach((btn) => {
+      const arrow = btn.querySelector(".sort-arrow");
+      if (arrow) arrow.textContent = invoicesSort && invoicesSort.key === btn.dataset.sortInv ? (invoicesSort.dir === "asc" ? " ▲" : " ▼") : "";
+    });
     const tb = $("invoices-table").querySelector("tbody");
     tb.innerHTML = rows.length
       ? rows.map((r) => `<tr>
