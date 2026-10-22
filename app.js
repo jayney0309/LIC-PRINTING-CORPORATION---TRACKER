@@ -2955,7 +2955,9 @@
       const key = (r.invoice_no || "").trim();
       if (!key) { noInvoice.push(r); return; }
       if (!byInvoice[key]) {
-        byInvoice[key] = { ...r, modes: new Set([r.mode_of_payment || "(not specified)"]) };
+        byInvoice[key] = { ...r, modes: new Set([r.mode_of_payment || "(not specified)"]), receipts: new Set() };
+        const rc0 = (r.bir_receipt_no || "").trim();
+        if (rc0) byInvoice[key].receipts.add(rc0);
       } else {
         const g = byInvoice[key];
         g.total_amount = Number(g.total_amount || 0) + Number(r.total_amount || 0);
@@ -2965,11 +2967,13 @@
         // first row seen (set via the spread below), never sum it again here.
         g.modes.add(r.mode_of_payment || "(not specified)");
         if (r.bir_receipt_no) g.bir_receipt_no = g.bir_receipt_no || r.bir_receipt_no;
+        const rc1 = (r.bir_receipt_no || "").trim();
+        if (rc1) g.receipts.add(rc1);
       }
     });
     const salesDetailRows = [
-      ...Object.values(byInvoice).map((g) => ({ ...g, modeLabel: Array.from(g.modes).join(" + ") })),
-      ...noInvoice.map((r) => ({ ...r, modeLabel: r.mode_of_payment || "(not specified)" })),
+      ...Object.values(byInvoice).map((g) => ({ ...g, modeLabel: Array.from(g.modes).join(" + "), receiptLabel: Array.from(g.receipts).join(", ") })),
+      ...noInvoice.map((r) => ({ ...r, modeLabel: r.mode_of_payment || "(not specified)", receiptLabel: (r.bir_receipt_no || "").trim() })),
     ].sort((a, b) => (a.trx_date || "").localeCompare(b.trx_date || ""));
     const sdTb = $("opsreport-salesdetail-table").querySelector("tbody");
     sdTb.innerHTML = salesDetailRows.length
@@ -2978,7 +2982,7 @@
           <td>${escapeHtml(r.reference_person || (r.is_walkin ? "Walk-in" : ""))}</td><td>${escapeHtml(r.invoice_no || "")}</td>
           <td class="num">₱ ${fmtMoney(r.total_amount)}</td><td class="num">₱ ${fmtMoney(r.amount_received)}</td>
           <td class="num">₱ ${fmtMoney(r.effective_balance != null ? r.effective_balance : r.balance)}</td><td>${escapeHtml(r.modeLabel)}</td>
-          <td>${(r.bir_receipt_no || "").trim() ? statusBadge("FULLY PAID") : statusBadge("N/A")}</td>
+          <td>${escapeHtml((r.receiptLabel || "").replace(/\.0+(?=,|$)/g, ""))}</td>
         </tr>`).join("")
       : `<tr class="empty-row"><td colspan="9">No sales in this period</td></tr>`;
 
