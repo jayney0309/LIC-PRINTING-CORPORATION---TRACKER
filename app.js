@@ -1438,6 +1438,8 @@
         <td><input type="checkbox" data-imp-include="${i}" checked /></td>
         <td><input type="date" data-imp-date="${i}" value="${r.trx_date || ""}" style="width:130px;" /></td>
         <td><input type="text" data-imp-business="${i}" value="${escapeHtml(r.business_name)}" style="min-width:160px;" /></td>
+        <td><input type="text" data-imp-tin="${i}" value="${escapeHtml(r.tin || "")}" style="width:130px;" /></td>
+        <td><input type="text" data-imp-invoice="${i}" value="${escapeHtml(r.invoice_no || "")}" style="width:110px;" /></td>
         <td class="num"><input type="number" step="0.01" data-imp-amount="${i}" value="${amountVal}" style="width:90px;text-align:right;" /></td>
         <td><input type="text" data-imp-category="${i}" value="${escapeHtml(r.category)}" style="width:110px;" /></td>
         <td><input type="text" data-imp-mode="${i}" value="${escapeHtml(r.mode_of_payment)}" style="width:90px;" /></td>
@@ -1459,7 +1461,7 @@
     const total = importPreviewRows.reduce((a, r) => a + (isNaN(r.amount) ? 0 : Number(r.amount)), 0);
     const includedCount = $("expenses-import-table").querySelectorAll("[data-imp-include]:checked").length;
     $("expenses-import-summary").textContent =
-      `${importPreviewRows.length} row(s) parsed, ${includedCount} checked for import — total ₱ ${fmtMoney(total)}. Review the fields below, uncheck or fix any that look wrong, then import.`;
+      `Importing into ${fullEntityLabel(currentExpensesEntity)}. ${importPreviewRows.length} row(s) parsed, ${includedCount} checked for import — total ₱ ${fmtMoney(total)}. Review the fields below (including TIN and OR no.), uncheck or fix any that look wrong, then import.`;
   }
 
   function resetImportPanel() {
@@ -1486,14 +1488,27 @@
       const category = tr.querySelector(`[data-imp-category="${i}"]`).value.trim();
       const mode = tr.querySelector(`[data-imp-mode="${i}"]`).value.trim();
       const taxType = tr.querySelector(`[data-imp-taxtype="${i}"]`).value;
+      // These three were being read from the file but never saved: TIN and
+      // OR / invoice no. now come from the editable preview fields, and
+      // Particulars from the mapped column. business_entity was never set
+      // either, so imported rows had no entity and didn't show on the
+      // Sole Prop / Corp expenses tabs -- they now take the entity of the
+      // tab the import was started from.
+      const tin = tr.querySelector(`[data-imp-tin="${i}"]`).value.trim();
+      const invoiceNo = tr.querySelector(`[data-imp-invoice="${i}"]`).value.trim();
+      const particulars = ((importPreviewRows[i] && importPreviewRows[i].particulars) || "").trim();
       if (!date || !business || isNaN(amount)) { skipped++; return; }
       payload.push({
         trx_date: date,
         business_name: business,
+        tin: tin || null,
+        invoice_no: invoiceNo || null,
+        particulars: particulars || null,
         amount,
         category: category || null,
         mode_of_payment: mode || null,
         business_scope: scope,
+        business_entity: currentExpensesEntity,
         tax_type: taxType,
         source: "excel-import",
       });
@@ -2874,17 +2889,53 @@
     // together in one line ----
     const birEntities = entity ? [entity] : ["SOLE PROPRIETORSHIP", "CORPORATION"];
     const birRowsHtml = [];
+    // Each BIR receipt is counted ONCE (not once per payment row): every row
+    // of an invoice paid in installments carries the same full invoice total,
+    // so adding them up row by row double-counted it -- and no longer matched
+    // the Sales Report, which holds one line per receipt. Same rule as the
+    // Sales Report: one line per (entity, receipt no.), amount taken from the
+    // earliest row. A sale with no receipt is counted once per Xero invoice,
+    // and not at all here if another payment of that same invoice already
+    // carries a receipt (it's already in the "With" line).
+    const normRcpt = (v) => String(v || "").trim().replace(/\.0+$/, "");
+    const normInv = (v) => String(v || "").trim().replace(/\s+/g, " ").toUpperCase();
+    const ordered = (sales || []).slice().sort((a, b) => String(a.trx_date || "").localeCompare(String(b.trx_date || "")) || Number(a.id || 0) - Number(b.id || 0));
+    let birTotalCount = 0, birTotalAmount = 0;
     birEntities.forEach((e) => {
-      const eSales = (sales || []).filter((r) => (r.business_entity || "SOLE PROPRIETORSHIP") === e);
-      const withReceipt = eSales.filter((r) => (r.bir_receipt_no || "").trim());
-      const withoutReceipt = eSales.filter((r) => !(r.bir_receipt_no || "").trim());
+      const eSales = ordered.filter((r) => (r.business_entity || "SOLE PROPRIETORSHIP") === e);
+      const withReceipt = [];
+      const seenReceipt = new Set();
+      const invoicesWithReceipt = new Set();
+      eSales.forEach((r) => {
+        const rc = normRcpt(r.bir_receipt_no);
+        if (!rc) return;
+        if (normInv(r.invoice_no)) invoicesWithReceipt.add(normInv(r.invoice_no));
+        if (seenReceipt.has(rc)) return;
+        seenReceipt.add(rc);
+        withReceipt.push(r);
+      });
+      const withoutReceipt = [];
+      const seenInvoice = new Set();
+      eSales.forEach((r) => {
+        if (normRcpt(r.bir_receipt_no)) return;
+        const inv = normInv(r.invoice_no);
+        if (inv) {
+          if (invoicesWithReceipt.has(inv) || seenInvoice.has(inv)) return;
+          seenInvoice.add(inv);
+        }
+        withoutReceipt.push(r);
+      });
+      const subCount = withReceipt.length + withoutReceipt.length;
+      const subAmount = sum(withReceipt, "total_amount") + sum(withoutReceipt, "total_amount");
+      birTotalCount += subCount;
+      birTotalAmount += subAmount;
       birRowsHtml.push(`<tr><td>${escapeHtml(fullEntityLabel(e))}</td><td>With BIR receipt no.</td><td class="num">${withReceipt.length}</td><td class="num">₱ ${fmtMoney(sum(withReceipt, "total_amount"))}</td></tr>`);
       birRowsHtml.push(`<tr><td>${escapeHtml(fullEntityLabel(e))}</td><td>Without BIR receipt no.</td><td class="num">${withoutReceipt.length}</td><td class="num">₱ ${fmtMoney(sum(withoutReceipt, "total_amount"))}</td></tr>`);
       if (!entity) {
-        birRowsHtml.push(`<tr><td>${escapeHtml(fullEntityLabel(e))}</td><td><strong>Subtotal</strong></td><td class="num"><strong>${eSales.length}</strong></td><td class="num"><strong>₱ ${fmtMoney(sum(eSales, "total_amount"))}</strong></td></tr>`);
+        birRowsHtml.push(`<tr><td>${escapeHtml(fullEntityLabel(e))}</td><td><strong>Subtotal</strong></td><td class="num"><strong>${subCount}</strong></td><td class="num"><strong>₱ ${fmtMoney(subAmount)}</strong></td></tr>`);
       }
     });
-    birRowsHtml.push(`<tr><td colspan="2"><strong>TOTAL (all entities)</strong></td><td class="num"><strong>${(sales || []).length}</strong></td><td class="num"><strong>₱ ${fmtMoney(totalSales)}</strong></td></tr>`);
+    birRowsHtml.push(`<tr><td colspan="2"><strong>TOTAL (all entities)</strong></td><td class="num"><strong>${birTotalCount}</strong></td><td class="num"><strong>₱ ${fmtMoney(birTotalAmount)}</strong></td></tr>`);
     const birTb = $("opsreport-bir-table").querySelector("tbody");
     birTb.innerHTML = birRowsHtml.join("");
 

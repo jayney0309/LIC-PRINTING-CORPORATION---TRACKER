@@ -289,7 +289,7 @@
           <p class="section-note" id="expenses-import-summary"></p>
           <div class="table-wrap"><table class="data" id="expenses-import-table">
             <thead><tr>
-              <th></th><th>Date</th><th>Business / payee</th><th class="num">Amount</th><th>Category</th><th>Mode</th><th>Tax type</th><th></th>
+              <th></th><th>Date</th><th>Business / payee</th><th>TIN</th><th>OR / invoice no.</th><th class="num">Amount</th><th>Category</th><th>Mode</th><th>Tax type</th><th></th>
             </tr></thead>
             <tbody></tbody>
           </table></div>
@@ -556,7 +556,7 @@
       <div class="panel">
         <div class="panel-head">
           <h2>Sales — with vs without BIR receipt</h2>
-          <span class="hint">How much of the period's sales are officially receipted vs not yet</span>
+          <span class="hint">How much of the period's sales are officially receipted vs not yet — each BIR receipt (or Xero invoice) is counted once, so an invoice paid in installments isn't counted twice</span>
         </div>
         <div class="table-wrap"><table class="data" id="opsreport-bir-table">
           <thead><tr>
@@ -1308,6 +1308,6 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="config.js" onerror="console.warn('config.js not found — copy config.example.js to config.js')"></script>
-<script src="app.js?v=20261022d"></script>
+<script src="app.js?v=20261023b"></script>
 </body>
 </html>
