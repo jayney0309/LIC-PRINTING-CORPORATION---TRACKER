@@ -1921,7 +1921,7 @@
       const rows = await fetchInvoicesRows();
       downloadCSV("sales_report.csv", rows, [
         { label: "Month", key: "month_declared" }, { label: "Date", key: "invoice_date" },
-        { label: "Invoice No", key: "invoice_no" }, { label: "TIN", key: "tin" }, { label: "Customer", key: "customer_name" },
+        { label: "BIR Receipt No.", key: "invoice_no" }, { label: "TIN", key: "tin" }, { label: "Customer", key: "customer_name" },
         { label: "Business Entity", key: "business_entity" },
         { label: "Gross", key: "gross_sales" }, { label: "Net", key: "net_sales" }, { label: "VAT", key: "vat" },
         { label: "Withholding Tax", key: "withholding_tax" }, { label: "With 2307", key: "with_2307" },
@@ -1943,12 +1943,19 @@
   // of a VAT filing. A row with ₱0 VAT is bucketed as Exempt/Zero-rated
   // (this register doesn't keep the two separate at the invoice level, only
   // on the Daily Sales row itself for entries made after this feature).
+  // RELIEF date format: MM/DD/YYYY (blank if the row has no date).
+  function reliefDate(v) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ""));
+    return m ? `${m[2]}/${m[3]}/${m[1]}` : "";
+  }
   function exportSlsRelief(rows) {
     const data = rows
       .filter((r) => r.business_entity === "SOLE PROPRIETORSHIP")
       .map((r) => {
         const vat = Number(r.vat || 0);
         return {
+          "Invoice Date": reliefDate(r.invoice_date),
+          "Invoice Number": String(r.invoice_no || "").trim().replace(/\.0+$/, ""),
           "TIN": r.tin || "", "Registered Name": r.customer_name || "", "Address": "",
           "Exempt / Zero-Rated Sales": vat === 0 ? Number(r.gross_sales || 0) : 0,
           "Taxable Net Sales": vat > 0 ? Number(r.net_sales || 0) : 0,
@@ -2511,7 +2518,7 @@
     $("expreport-export").addEventListener("click", () => {
       if (!lastExpReportRows.length) return toast("Nothing to export yet — run the report first", true);
       downloadCSV("expenses_report.csv", lastExpReportRows, [
-        { label: "Date", key: "trx_date" }, { label: "Business", key: "business_name" },
+        { label: "Date", key: "trx_date" }, { label: "OR / Invoice No", key: "invoice_no" }, { label: "TIN", key: "tin" }, { label: "Business", key: "business_name" },
         { label: "Category", key: "category" }, { label: "Tax Type", key: "tax_type" },
         { label: "Business Entity", key: "business_entity" }, { label: "Amount", key: "amount" },
         { label: "Mode", key: "mode_of_payment" }, { label: "ATC", key: "atc" }, { label: "Tax Withheld", key: "tax_withheld" },
@@ -2529,6 +2536,8 @@
     const data = rows
       .filter((r) => r.tax_type === "VAT" && (r.tin || "").trim())
       .map((r) => ({
+        "Date": reliefDate(r.trx_date),
+        "OR / Invoice Number": String(r.invoice_no || "").trim(),
         "TIN": r.tin, "Registered Name": r.business_name || "", "Address": "",
         "Amount of Purchases": Number(r.amount || 0),
         "Input Tax": Number(r.amount || 0) - Number(r.amount || 0) / 1.12,
@@ -2889,17 +2898,53 @@
     // together in one line ----
     const birEntities = entity ? [entity] : ["SOLE PROPRIETORSHIP", "CORPORATION"];
     const birRowsHtml = [];
+    // Each BIR receipt is counted ONCE (not once per payment row): every row
+    // of an invoice paid in installments carries the same full invoice total,
+    // so adding them up row by row double-counted it -- and no longer matched
+    // the Sales Report, which holds one line per receipt. Same rule as the
+    // Sales Report: one line per (entity, receipt no.), amount taken from the
+    // earliest row. A sale with no receipt is counted once per Xero invoice,
+    // and not at all here if another payment of that same invoice already
+    // carries a receipt (it's already in the "With" line).
+    const normRcpt = (v) => String(v || "").trim().replace(/\.0+$/, "");
+    const normInv = (v) => String(v || "").trim().replace(/\s+/g, " ").toUpperCase();
+    const ordered = (sales || []).slice().sort((a, b) => String(a.trx_date || "").localeCompare(String(b.trx_date || "")) || Number(a.id || 0) - Number(b.id || 0));
+    let birTotalCount = 0, birTotalAmount = 0;
     birEntities.forEach((e) => {
-      const eSales = (sales || []).filter((r) => (r.business_entity || "SOLE PROPRIETORSHIP") === e);
-      const withReceipt = eSales.filter((r) => (r.bir_receipt_no || "").trim());
-      const withoutReceipt = eSales.filter((r) => !(r.bir_receipt_no || "").trim());
+      const eSales = ordered.filter((r) => (r.business_entity || "SOLE PROPRIETORSHIP") === e);
+      const withReceipt = [];
+      const seenReceipt = new Set();
+      const invoicesWithReceipt = new Set();
+      eSales.forEach((r) => {
+        const rc = normRcpt(r.bir_receipt_no);
+        if (!rc) return;
+        if (normInv(r.invoice_no)) invoicesWithReceipt.add(normInv(r.invoice_no));
+        if (seenReceipt.has(rc)) return;
+        seenReceipt.add(rc);
+        withReceipt.push(r);
+      });
+      const withoutReceipt = [];
+      const seenInvoice = new Set();
+      eSales.forEach((r) => {
+        if (normRcpt(r.bir_receipt_no)) return;
+        const inv = normInv(r.invoice_no);
+        if (inv) {
+          if (invoicesWithReceipt.has(inv) || seenInvoice.has(inv)) return;
+          seenInvoice.add(inv);
+        }
+        withoutReceipt.push(r);
+      });
+      const subCount = withReceipt.length + withoutReceipt.length;
+      const subAmount = sum(withReceipt, "total_amount") + sum(withoutReceipt, "total_amount");
+      birTotalCount += subCount;
+      birTotalAmount += subAmount;
       birRowsHtml.push(`<tr><td>${escapeHtml(fullEntityLabel(e))}</td><td>With BIR receipt no.</td><td class="num">${withReceipt.length}</td><td class="num">₱ ${fmtMoney(sum(withReceipt, "total_amount"))}</td></tr>`);
       birRowsHtml.push(`<tr><td>${escapeHtml(fullEntityLabel(e))}</td><td>Without BIR receipt no.</td><td class="num">${withoutReceipt.length}</td><td class="num">₱ ${fmtMoney(sum(withoutReceipt, "total_amount"))}</td></tr>`);
       if (!entity) {
-        birRowsHtml.push(`<tr><td>${escapeHtml(fullEntityLabel(e))}</td><td><strong>Subtotal</strong></td><td class="num"><strong>${eSales.length}</strong></td><td class="num"><strong>₱ ${fmtMoney(sum(eSales, "total_amount"))}</strong></td></tr>`);
+        birRowsHtml.push(`<tr><td>${escapeHtml(fullEntityLabel(e))}</td><td><strong>Subtotal</strong></td><td class="num"><strong>${subCount}</strong></td><td class="num"><strong>₱ ${fmtMoney(subAmount)}</strong></td></tr>`);
       }
     });
-    birRowsHtml.push(`<tr><td colspan="2"><strong>TOTAL (all entities)</strong></td><td class="num"><strong>${(sales || []).length}</strong></td><td class="num"><strong>₱ ${fmtMoney(totalSales)}</strong></td></tr>`);
+    birRowsHtml.push(`<tr><td colspan="2"><strong>TOTAL (all entities)</strong></td><td class="num"><strong>${birTotalCount}</strong></td><td class="num"><strong>₱ ${fmtMoney(birTotalAmount)}</strong></td></tr>`);
     const birTb = $("opsreport-bir-table").querySelector("tbody");
     birTb.innerHTML = birRowsHtml.join("");
 
