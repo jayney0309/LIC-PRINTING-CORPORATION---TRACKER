@@ -136,6 +136,7 @@
           <div class="field"><label>Amount received</label><input type="number" step="0.01" min="0" id="sales-received" value="0" /></div>
           <div class="field"><label>Mode of payment</label><input list="payment-modes" id="sales-mode" /></div>
           <div class="field"><label>Xero Invoice No.</label><input id="sales-invoice" placeholder="INV-..." /></div>
+          <div class="field wide" id="sales-amount-warning" style="display:none;background:#fff4e0;border:1px solid #e0a030;color:#6b4200;border-radius:6px;padding:8px 10px;font-size:13px;line-height:1.5;"></div>
           <div class="field"><label>Customer TIN</label><input id="sales-tin" placeholder="000-000-000-000" /></div>
           <div class="field"><label>Tax withheld %</label>
             <select id="sales-taxwithheld-pct">
@@ -1308,6 +1309,6 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="config.js" onerror="console.warn('config.js not found — copy config.example.js to config.js')"></script>
-<script src="app.js?v=20261024"></script>
+<script src="app.js?v=20261024b"></script>
 </body>
 </html>

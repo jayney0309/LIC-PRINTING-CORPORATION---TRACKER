@@ -558,11 +558,107 @@
     }
     return path;
   }
+  // Installment guard. Every payment of the same Xero invoice should carry the
+  // SAME Total (the full invoice amount); only "Amount received" changes per
+  // payment. A wrong Total on the balance / full-payment entry is the most
+  // common data-entry slip, so compare against the earlier entries of the
+  // same invoice and warn (live under the form, and again before saving).
+  let amountCheckSeq = 0;
+  async function checkInvoiceAmounts() {
+    const rawInv = $("sales-invoice").value.trim();
+    if (!rawInv || !sb) return [];
+    const norm = (v) => String(v || "").trim().replace(/\s+/g, " ").toUpperCase();
+    const invKey = norm(rawInv);
+    const ent = $("sales-entity").value || "SOLE PROPRIETORSHIP";
+    const editingId = $("sales-id").value;
+    const total = Number($("sales-total").value || 0);
+    const received = Number($("sales-received").value || 0);
+    const pattern = "%" + rawInv.replace(/[%_,()]/g, "").split(/\s+/).join("%") + "%";
+    const { data, error } = await sb.from("sales")
+      .select("id,trx_date,total_amount,amount_received,invoice_no,business_entity")
+      .is("deleted_at", null).ilike("invoice_no", pattern).limit(200);
+    if (error || !data) return [];
+    const others = data
+      .filter((r) => norm(r.invoice_no) === invKey
+        && (r.business_entity || "SOLE PROPRIETORSHIP") === ent
+        && String(r.id) !== String(editingId))
+      .sort((a, b) => String(a.trx_date || "").localeCompare(String(b.trx_date || "")) || Number(a.id) - Number(b.id));
+    if (!others.length || !(total > 0)) return [];
+    const base = Number(others[0].total_amount || 0);
+    const prior = others.reduce((t, r) => t + Number(r.amount_received || 0), 0);
+    const warns = [];
+    if (Math.abs(total - base) > 0.01) {
+      const isFinal = received > 0 && prior + received >= base - 0.01;
+      warns.push(
+        (isFinal ? "Mukhang ito ang BALANCE / FULL payment, pero " : "") +
+        `ang Total na ₱${fmtMoney(total)} ay iba sa Total ng mga naunang entry ng ${rawInv} (₱${fmtMoney(base)}). ` +
+        `Dapat pareho ang Total sa lahat ng payment ng iisang invoice — ang halaga ng bayad ay ilagay sa "Amount received".`);
+    }
+    if (prior + received > base + 0.01) {
+      warns.push(`Sobra: naunang bayad ₱${fmtMoney(prior)} + ito ₱${fmtMoney(received)} = ₱${fmtMoney(prior + received)}, lampas sa total ng invoice na ₱${fmtMoney(base)}.`);
+    }
+    return warns;
+  }
+  // Duplicate BIR receipt guard. One BIR receipt no. belongs to one sale (the
+  // payments of a single Xero invoice may share it). Warn when the number is
+  // already used by a different invoice / customer, in Daily Sales or in the
+  // Sales Report.
+  async function checkDuplicateReceipt() {
+    const rcpt = $("sales-bir").value.trim().replace(/\.0+$/, "");
+    if (!rcpt || !sb) return [];
+    const norm = (v) => String(v || "").trim().replace(/\s+/g, " ").toUpperCase();
+    const ent = $("sales-entity").value || "SOLE PROPRIETORSHIP";
+    const editingId = $("sales-id").value;
+    const myInv = norm($("sales-invoice").value);
+    const variants = [rcpt, rcpt + ".0"];
+    const [salesRes, repRes] = await Promise.all([
+      sb.from("sales").select("id,trx_date,tradename,total_amount,invoice_no,business_entity")
+        .is("deleted_at", null).in("bir_receipt_no", variants).limit(50),
+      sb.from("issued_invoices").select("id,sale_id,invoice_date,customer_name,gross_sales,business_entity,cancelled")
+        .in("invoice_no", variants).limit(50),
+    ]);
+    const warns = [];
+    const sameEnt = (e) => (e || "SOLE PROPRIETORSHIP") === ent;
+    const salesHits = (salesRes.data || []).filter((r) => String(r.id) !== String(editingId) && sameEnt(r.business_entity));
+    const seenIds = new Set(salesHits.map((r) => String(r.id)));
+    if (editingId) seenIds.add(String(editingId));
+    salesHits.forEach((r) => {
+      if (myInv && norm(r.invoice_no) === myInv) return; // same invoice, another installment: allowed
+      warns.push(`Ang BIR receipt no. ${rcpt} ay gamit na sa Daily Sales: ${r.tradename || "?"} (${r.trx_date}, ₱${fmtMoney(r.total_amount)}${r.invoice_no ? ", " + r.invoice_no : ""}). Iisang receipt no. lang dapat ang bawat benta.`);
+    });
+    (repRes.data || []).filter((r) => !r.cancelled && sameEnt(r.business_entity) && !seenIds.has(String(r.sale_id))).forEach((r) => {
+      warns.push(`Ang BIR receipt no. ${rcpt} ay nasa Sales Report na: ${r.customer_name || "?"} (${r.invoice_date || "no date"}, ₱${fmtMoney(r.gross_sales)}). Kung ibang benta ito, doble ang receipt no.; kung ito rin ang benta na ito, balewalain.`);
+    });
+    return warns;
+  }
+  async function checkSaleWarnings() {
+    const a = await checkInvoiceAmounts();
+    let b = [];
+    try { b = await checkDuplicateReceipt(); } catch (e) { b = []; }
+    return [...a, ...b];
+  }
+  async function refreshAmountWarning() {
+    const box = $("sales-amount-warning");
+    if (!box) return;
+    const seq = ++amountCheckSeq;
+    let warns = [];
+    try { warns = await checkSaleWarnings(); } catch (e) { warns = []; }
+    if (seq !== amountCheckSeq) return;
+    if (!warns.length) { box.style.display = "none"; box.textContent = ""; return; }
+    box.innerHTML = "<strong>⚠ Pakisuri bago i-save:</strong><br>" + warns.map(escapeHtml).join("<br>");
+    box.style.display = "";
+  }
   function initSalesForm() {
     $("sales-date").value = todayISO();
     $("sales-entity").value = currentSalesEntity;
     updateSalesFormForEntity();
     $("sales-total").addEventListener("input", () => { updateSalesTaxWithheldFromPct(); updateSalesVatPreview(); });
+    let amountWarnTimer = null;
+    const queueAmountWarning = () => { clearTimeout(amountWarnTimer); amountWarnTimer = setTimeout(refreshAmountWarning, 400); };
+    ["sales-invoice", "sales-total", "sales-received", "sales-bir"].forEach((id) => {
+      $(id).addEventListener("input", queueAmountWarning);
+      $(id).addEventListener("change", queueAmountWarning);
+    });
     $("sales-taxwithheld-pct").addEventListener("change", updateSalesTaxWithheldFromPct);
     $("sales-taxwithheld").addEventListener("input", updateSales2307FieldVisibility);
     $("sales-2307status").addEventListener("change", updateSales2307FieldVisibility);
@@ -579,6 +675,8 @@
     $("sales-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!requireDb()) return;
+      const amountWarns = await checkSaleWarnings();
+      if (amountWarns.length && !confirm("⚠ Pakisuri bago i-save:\n\n" + amountWarns.map((w) => "• " + w).join("\n\n") + "\n\nI-save pa rin?")) return;
       const id = $("sales-id").value;
       const grossAmount = Number($("sales-total").value || 0);
       const zeroRated = $("sales-zerorated").checked;
@@ -671,6 +769,8 @@
     $("sales-date").value = todayISO();
     $("sales-received").value = "0";
     $("sales-vat-preview").value = "";
+    amountCheckSeq++;
+    if ($("sales-amount-warning")) $("sales-amount-warning").style.display = "none";
     $("sales-form-title").textContent = "Log a sale";
     $("sales-cancel-edit").style.display = "none";
     updateSalesFormForEntity();
@@ -837,6 +937,7 @@
     $("sales-mode").value = r.mode_of_payment || "";
     $("sales-invoice").value = r.invoice_no || "";
     $("sales-entity").value = r.business_entity || "";
+    refreshAmountWarning();
     $("sales-tin").value = r.tin || "";
     $("sales-atc").value = r.atc || "";
     $("sales-taxwithheld").value = r.tax_withheld ?? "";
