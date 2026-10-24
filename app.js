@@ -558,6 +558,13 @@
     }
     return path;
   }
+  // A BIR receipt that covers several Xero invoices paid in ONE payment is
+  // marked with this tag at the start of the sale's Remarks (the checkbox on the
+  // sales form adds / removes it), so the duplicate-receipt warnings and Data
+  // checks know the sharing is intentional.
+  const SHARED_RCPT_TAG = "[COMBINED RECEIPT]";
+  const hasSharedTag = (remarks) => String(remarks || "").includes(SHARED_RCPT_TAG);
+  const stripSharedTag = (remarks) => String(remarks || "").replace(SHARED_RCPT_TAG, "").trim();
   // Installment guard. Every payment of the same Xero invoice should carry the
   // SAME Total (the full invoice amount); only "Amount received" changes per
   // payment. A wrong Total on the balance / full-payment entry is the most
@@ -605,7 +612,7 @@
   // Sales Report.
   async function checkDuplicateReceipt() {
     const rcpt = $("sales-bir").value.trim().replace(/\.0+$/, "");
-    if (!rcpt || !sb) return [];
+    if (!rcpt || !sb || $("sales-sharedrcpt").checked) return [];
     const norm = (v) => String(v || "").trim().replace(/\s+/g, " ").toUpperCase();
     const ent = $("sales-entity").value || "SOLE PROPRIETORSHIP";
     const editingId = $("sales-id").value;
@@ -655,7 +662,7 @@
     $("sales-total").addEventListener("input", () => { updateSalesTaxWithheldFromPct(); updateSalesVatPreview(); });
     let amountWarnTimer = null;
     const queueAmountWarning = () => { clearTimeout(amountWarnTimer); amountWarnTimer = setTimeout(refreshAmountWarning, 400); };
-    ["sales-invoice", "sales-total", "sales-received", "sales-bir"].forEach((id) => {
+    ["sales-invoice", "sales-total", "sales-received", "sales-bir", "sales-sharedrcpt"].forEach((id) => {
       $(id).addEventListener("input", queueAmountWarning);
       $(id).addEventListener("change", queueAmountWarning);
     });
@@ -707,7 +714,7 @@
         discount_amount: $("sales-discount").value ? Number($("sales-discount").value) : 0,
         discount_details: $("sales-discount-details").value.trim() || null,
         description: $("sales-description").value.trim() || null,
-        remarks: $("sales-remarks").value.trim() || null,
+        remarks: (($("sales-sharedrcpt").checked ? SHARED_RCPT_TAG + " " : "") + $("sales-remarks").value.trim()).trim() || null,
       };
       let error, savedId = id || null;
       if (id) {
@@ -949,7 +956,8 @@
     $("sales-discount").value = r.discount_amount || "";
     $("sales-discount-details").value = r.discount_details || "";
     $("sales-description").value = r.description || "";
-    $("sales-remarks").value = r.remarks || "";
+    $("sales-remarks").value = stripSharedTag(r.remarks);
+    $("sales-sharedrcpt").checked = hasSharedTag(r.remarks);
     $("sales-2307status").value = "";
     $("sales-2307upload").value = "";
     updateSalesFormForEntity();
@@ -4175,6 +4183,7 @@
   function initAuditView() {
     $("closure-year").value = new Date().getFullYear();
     $("closure-close").addEventListener("click", closeQuarter);
+    $("datacheck-run").addEventListener("click", loadDataChecks);
     $("audit-f-apply").addEventListener("click", loadAuditLog);
     $("audit-f-clear").addEventListener("click", () => {
       $("audit-f-table").value = "";
@@ -4183,9 +4192,96 @@
       loadAuditLog();
     });
   }
+  // Data checks over EXISTING sales (the live warnings on the Log-a-sale form
+  // only cover new entries). Flags: (1) one BIR receipt no. used by different
+  // invoices, (2) the Total changing between payments of one Xero invoice --
+  // every payment of an invoice should carry the full invoice amount,
+  // (3) an invoice paid more than its total, (4) the same receipt no. twice
+  // in the Sales Report.
+  async function loadDataChecks() {
+    const yearEl = $("datacheck-year");
+    const year = Number(yearEl.value) || new Date().getFullYear();
+    yearEl.value = year;
+    $("datacheck-summary").textContent = "Checking…";
+    const since = `${year - 1}-01-01`;
+    const [salesRes, repRes] = await Promise.all([
+      fetchAllPages((a, b) => sb.from("sales")
+        .select("id,trx_date,tradename,total_amount,amount_received,invoice_no,bir_receipt_no,business_entity,remarks")
+        .is("deleted_at", null).gte("trx_date", since).order("trx_date").order("id").range(a, b)),
+      fetchAllPages((a, b) => sb.from("issued_invoices")
+        .select("id,sale_id,invoice_date,invoice_no,customer_name,gross_sales,business_entity,cancelled")
+        .gte("invoice_date", since).order("invoice_date").order("id").range(a, b)),
+    ]);
+    if (salesRes.error) { $("datacheck-summary").textContent = ""; return toast(salesRes.error.message, true); }
+    if (repRes.error) { $("datacheck-summary").textContent = ""; return toast(repRes.error.message, true); }
+    const sales = salesRes.data || [], report = repRes.data || [];
+    const yr = String(year);
+    const inYear = (rows, key) => rows.some((r) => String(r[key] || "").startsWith(yr));
+    const normInv = (v) => String(v || "").trim().replace(/\s+/g, " ").toUpperCase();
+    const normRc = (v) => String(v || "").trim().replace(/\.0+$/, "");
+    const entOf = (v) => v || "SOLE PROPRIETORSHIP";
+    const entShort = (v) => (entOf(v) === "CORPORATION" ? "Corp" : "Sole Prop");
+    const money = (n) => "₱ " + fmtMoney(n);
+    const groupBy = (rows, keyFn) => {
+      const m = new Map();
+      rows.forEach((r) => { const k = keyFn(r); if (k == null) return; (m.get(k) || m.set(k, []).get(k)).push(r); });
+      return m;
+    };
+
+    // (1) one receipt no., different invoices
+    const dupReceipts = [], combinedOk = [];
+    const sharedSaleIds = new Set(sales.filter((r) => hasSharedTag(r.remarks)).map((r) => String(r.id)));
+    groupBy(sales, (r) => (normRc(r.bir_receipt_no) ? entOf(r.business_entity) + "|" + normRc(r.bir_receipt_no) : null)).forEach((rows, k) => {
+      const invs = new Set(rows.map((r) => normInv(r.invoice_no) || "#" + r.id));
+      if (invs.size > 1 && rows.every((r) => hasSharedTag(r.remarks))) {
+        if (inYear(rows, "trx_date")) combinedOk.push({ ref: "BIR receipt " + k.split("|")[1] + " (" + entShort(rows[0].business_entity) + ")", rows });
+        return;
+      }
+      if (invs.size > 1 && inYear(rows, "trx_date")) dupReceipts.push({ ref: "BIR receipt " + k.split("|")[1] + " (" + entShort(rows[0].business_entity) + ")", rows });
+    });
+    // (4) same receipt twice in the Sales Report
+    const dupReport = [];
+    groupBy(report.filter((r) => !r.cancelled), (r) => (normRc(r.invoice_no) ? entOf(r.business_entity) + "|" + normRc(r.invoice_no) : null)).forEach((rows, k) => {
+      if (rows.length > 1 && rows.every((r) => r.sale_id && sharedSaleIds.has(String(r.sale_id)))) return;
+      if (rows.length > 1 && inYear(rows, "invoice_date")) dupReport.push({ ref: "Sales Report receipt " + k.split("|")[1] + " (" + entShort(rows[0].business_entity) + ")", rows });
+    });
+    // (2) + (3) invoice groups
+    const badTotals = [], overpaid = [];
+    groupBy(sales, (r) => (normInv(r.invoice_no) ? entOf(r.business_entity) + "|" + normInv(r.invoice_no) : null)).forEach((rows, k) => {
+      if (rows.length < 2 || !inYear(rows, "trx_date")) return;
+      const label = "Xero invoice " + k.split("|")[1] + " (" + entShort(rows[0].business_entity) + ")";
+      const totals = new Set(rows.map((r) => Number(r.total_amount || 0).toFixed(2)));
+      if (totals.size > 1) badTotals.push({ ref: label, rows });
+      const base = Number(rows[0].total_amount || 0);
+      const paid = rows.reduce((t, r) => t + Number(r.amount_received || 0), 0);
+      if (totals.size === 1 && paid > base + 0.01) overpaid.push({ ref: label, rows, note: `Paid ${money(paid)} vs total ${money(base)}` });
+    });
+
+    const salesTable = (rows) => `<div class="table-wrap"><table class="data"><thead><tr><th>Date</th><th>Customer</th><th>Xero invoice</th><th>BIR receipt</th><th class="num">Total</th><th class="num">Received</th></tr></thead><tbody>${
+      rows.map((r) => `<tr><td>${fmtDate(r.trx_date)}</td><td>${escapeHtml(r.tradename || "")}</td><td>${escapeHtml(r.invoice_no || "")}</td><td>${escapeHtml(normRc(r.bir_receipt_no))}</td><td class="num">${money(r.total_amount)}</td><td class="num">${money(r.amount_received)}</td></tr>`).join("")
+    }</tbody></table></div>`;
+    const reportTable = (rows) => `<div class="table-wrap"><table class="data"><thead><tr><th>Date</th><th>Customer</th><th>BIR receipt</th><th class="num">Gross</th><th>Linked to a sale?</th></tr></thead><tbody>${
+      rows.map((r) => `<tr><td>${fmtDate(r.invoice_date)}</td><td>${escapeHtml(r.customer_name || "")}</td><td>${escapeHtml(normRc(r.invoice_no))}</td><td class="num">${money(r.gross_sales)}</td><td>${r.sale_id ? "Yes" : "No (old import)"}</td></tr>`).join("")
+    }</tbody></table></div>`;
+    const section = (title, help, items, tableFn) => `<h3 style="margin:14px 0 4px;">${title} <span class="hint">(${items.length})</span></h3>
+      <p class="hint" style="margin:0 0 6px;">${help}</p>` + (items.length
+      ? items.map((g) => `<div style="margin-bottom:10px;"><strong>${escapeHtml(g.ref)}</strong>${g.note ? ` <span class="hint">— ${escapeHtml(g.note)}</span>` : ""}${tableFn(g.rows)}</div>`).join("")
+      : `<p class="hint" style="margin:0 0 6px;">✓ Nothing found.</p>`);
+
+    $("datacheck-results").innerHTML =
+      section("Same BIR receipt no. on different invoices", "One BIR receipt belongs to one sale. Find the real receipt no. and fix the wrong row in Sales Search. If one payment really covers these invoices, edit each of them and tick “One payment / one BIR receipt covers 2 or more Xero invoices”.", dupReceipts, salesTable) +
+      (combinedOk.length ? `<p class="hint" style="margin:0 0 6px;">✓ ${combinedOk.length} combined receipt(s) you marked as one payment for several invoices: ${combinedOk.map((g) => escapeHtml(g.ref)).join(", ")}.</p>` : "") +
+      section("Total changes between payments of one invoice", "Every payment of the same Xero invoice should show the full invoice amount as Total; only “Received” differs. Fix the row with the wrong Total.", badTotals, salesTable) +
+      section("Paid more than the invoice total", "Total received across the payments is higher than the invoice Total.", overpaid, salesTable) +
+      section("Same receipt twice in the Sales Report", "Two live Sales Report rows carry the same BIR receipt no. (often an old import beside a synced row).", dupReport, reportTable);
+    const n = dupReceipts.length + badTotals.length + overpaid.length + dupReport.length;
+    $("datacheck-summary").textContent = n
+      ? `${n} item(s) to review for ${year} — ${dupReceipts.length} duplicate receipt(s), ${badTotals.length} changing total(s), ${overpaid.length} overpaid, ${dupReport.length} duplicate in Sales Report.`
+      : `No problems found for ${year}.`;
+  }
   async function loadAuditView() {
     if (!requireDb()) return;
-    await Promise.all([loadClosures(), loadTrash(), loadCreditNotesRegister(), loadAuditLog()]);
+    await Promise.all([loadClosures(), loadTrash(), loadCreditNotesRegister(), loadAuditLog(), loadDataChecks()]);
   }
   function initCreditNotesRegister() {
     $("cnreg-f-apply").addEventListener("click", loadCreditNotesRegister);

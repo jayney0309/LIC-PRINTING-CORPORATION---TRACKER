@@ -162,6 +162,7 @@
             <input type="file" id="sales-2307upload" accept=".pdf,.jpg,.jpeg,.png" />
           </div>
           <div class="field"><label>BIR receipt no.</label><input id="sales-bir" /></div>
+          <div class="field wide checkbox-field"><input type="checkbox" id="sales-sharedrcpt" /><label>One payment / one BIR receipt covers 2 or more Xero invoices (combined)</label></div>
           <div class="field checkbox-field"><input type="checkbox" id="sales-walkin" /><label>Walk-in customer</label></div>
           <div class="field" id="sales-zerorated-field"><div class="checkbox-field"><input type="checkbox" id="sales-zerorated" /><label>Zero-rated sale</label></div></div>
           <div class="field" id="sales-vatexempt-field"><div class="checkbox-field"><input type="checkbox" id="sales-vatexempt" /><label>VAT-exempt sale</label></div></div>
@@ -1089,6 +1090,19 @@
     <section id="view-audit" class="view">
       <p class="section-note">Everything on this page is about trust in the numbers, not about the numbers themselves: who changed what, what's been closed out as filed, and anything that was deleted (nothing is ever truly gone — Delete on Sales/Expenses just moves a record here).</p>
 
+      <div class="panel" id="datacheck-panel">
+        <div class="panel-head">
+          <h2>Data checks (existing sales)</h2>
+          <span class="hint">Finds past entries that look wrong: the same BIR receipt no. used twice, a Total that changes between payments of one Xero invoice, and invoices paid more than their total</span>
+        </div>
+        <div class="filters">
+          <div class="field"><label>Year</label><input type="number" id="datacheck-year" placeholder="e.g. 2026" /></div>
+          <button class="btn small accent" id="datacheck-run">Run checks</button>
+        </div>
+        <div id="datacheck-summary" class="hint" style="margin:6px 0 10px;"></div>
+        <div id="datacheck-results"></div>
+      </div>
+
       <div class="panel">
         <div class="panel-head">
           <h2>Filing periods</h2>
@@ -1309,6 +1323,6 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="config.js" onerror="console.warn('config.js not found — copy config.example.js to config.js')"></script>
-<script src="app.js?v=20261024b"></script>
+<script src="app.js?v=20261024d"></script>
 </body>
 </html>
