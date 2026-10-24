@@ -828,10 +828,18 @@
     const net = gross / 1.12;
     return { net, vat: gross - net };
   }
+  // Amount that goes on the Sales Report for a sale: what was actually
+  // received on this payment plus the tax the customer withheld (they paid it
+  // to BIR for us), never above the sale's Total. Nothing received on the row
+  // -> the Total. Mirrors sales_report_amount() in migration 50.
+  function reportAmount(received, withheld, total) {
+    const rec = Number(received || 0), tot = Number(total || 0);
+    return rec > 0 ? Math.min(rec + Number(withheld || 0), tot) : tot;
+  }
   async function syncSalesReport(saleId, payload) {
     const receiptNo = (payload.bir_receipt_no || "").trim();
     if (receiptNo) {
-      const gross = Number(payload.total_amount || 0);
+      const gross = reportAmount(payload.amount_received, payload.tax_withheld, payload.total_amount);
       const { net, vat } = computeNetVat(gross, payload.business_entity, payload.zero_rated || payload.vat_exempt);
       const taxWithheld = Number(payload.tax_withheld || 0);
       const monthStr = payload.trx_date.slice(0, 7);
@@ -2944,7 +2952,7 @@
     const to = $("opsreport-to").value;
     const entity = $("opsreport-entity").value;
 
-    let salesQuery = sb.from("v_sales_status").select("id,trx_date,tradename,total_amount,amount_received,balance,effective_balance,mode_of_payment,reference_person,business_entity,is_walkin,invoice_no,bir_receipt_no").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null);
+    let salesQuery = sb.from("v_sales_status").select("id,trx_date,tradename,total_amount,amount_received,balance,effective_balance,mode_of_payment,reference_person,business_entity,is_walkin,invoice_no,bir_receipt_no,tax_withheld").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null);
     if (entity) salesQuery = salesQuery.eq("business_entity", entity);
     let expQuery = sb.from("expenses").select("trx_date,amount,mode_of_payment,category,business_name,business_entity").gte("trx_date", from).lte("trx_date", to).is("deleted_at", null);
     if (entity) expQuery = expQuery.eq("business_entity", entity);
@@ -3044,10 +3052,11 @@
         withoutReceipt.push(r);
       });
       const subCount = withReceipt.length + withoutReceipt.length;
-      const subAmount = sum(withReceipt, "total_amount") + sum(withoutReceipt, "total_amount");
+      const withReceiptAmount = withReceipt.reduce((t, r) => t + reportAmount(r.amount_received, r.tax_withheld, r.total_amount), 0);
+      const subAmount = withReceiptAmount + sum(withoutReceipt, "total_amount");
       birTotalCount += subCount;
       birTotalAmount += subAmount;
-      birRowsHtml.push(`<tr><td>${escapeHtml(fullEntityLabel(e))}</td><td>With BIR receipt no.</td><td class="num">${withReceipt.length}</td><td class="num">₱ ${fmtMoney(sum(withReceipt, "total_amount"))}</td></tr>`);
+      birRowsHtml.push(`<tr><td>${escapeHtml(fullEntityLabel(e))}</td><td>With BIR receipt no.</td><td class="num">${withReceipt.length}</td><td class="num">₱ ${fmtMoney(withReceiptAmount)}</td></tr>`);
       birRowsHtml.push(`<tr><td>${escapeHtml(fullEntityLabel(e))}</td><td>Without BIR receipt no.</td><td class="num">${withoutReceipt.length}</td><td class="num">₱ ${fmtMoney(sum(withoutReceipt, "total_amount"))}</td></tr>`);
       if (!entity) {
         birRowsHtml.push(`<tr><td>${escapeHtml(fullEntityLabel(e))}</td><td><strong>Subtotal</strong></td><td class="num"><strong>${subCount}</strong></td><td class="num"><strong>₱ ${fmtMoney(subAmount)}</strong></td></tr>`);
